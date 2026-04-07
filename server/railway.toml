@@ -1,0 +1,12 @@
+# Railway config for the Node.js interview server service
+[build]
+builder = "nixpacks"
+buildCommand = "npm install && npm run build"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[environment]
+NODE_ENV = "production"

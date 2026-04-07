@@ -1,0 +1,55 @@
+# ─── Environment variables (never commit) ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+server/.env
+frontend/.env
+frontend/.env.local
+
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─── Build outputs ────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── OS / Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ─── TypeScript ───────────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+.cache/
+
+# ─── Large binary / model files (too big for git, download at setup) ──────────
+# onnxruntime-web wasm files (copied from node_modules at build time)
+frontend/public/ort-wasm-*.wasm
+frontend/public/ort-wasm-*.mjs
+
+# VAD assets (copied from node_modules at build time)
+frontend/public/silero_vad.onnx
+frontend/public/vad.worklet.bundle.min.js
+
+# Whisper model files (downloaded by server on first run)
+server/public/models/
+
+# Generic model/binary patterns
+*.onnx
+*.node
