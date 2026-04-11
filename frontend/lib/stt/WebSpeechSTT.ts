@@ -55,6 +55,9 @@ export class WebSpeechSTT implements STTProvider {
 
   // Accumulates interim text during a single start/stop session
   private lastInterim = ''
+  // Accumulates native finals fired by WebSpeech during continuous mode
+  // (browser auto-finalizes on silence; we collect them so nothing is lost on PTT release)
+  private accumulatedFinal = ''
   private recognition: ISpeechRecognition | null = null
 
   private get SpeechRecognitionCtor() {
@@ -71,6 +74,7 @@ export class WebSpeechSTT implements STTProvider {
 
     // Always create a fresh instance — avoids state leakage between sessions
     this.lastInterim = ''
+    this.accumulatedFinal = ''
     const rec = new Ctor()
     rec.lang = 'zh-CN'
     rec.interimResults = true
@@ -94,10 +98,13 @@ export class WebSpeechSTT implements STTProvider {
         this.lastInterim = interim
         this.emit('interim', interim)
       }
-      // If browser fires a native final (rare in continuous mode), use it
+      // Browser fired a native final (silence detected in continuous mode).
+      // Accumulate it — do NOT emit yet. The full transcript will be emitted
+      // in onend (after PTT release / abort), combining all accumulated finals
+      // with any trailing interim.
       if (final) {
+        this.accumulatedFinal += (this.accumulatedFinal ? ' ' : '') + final
         this.lastInterim = ''
-        this.emit('final', final)
       }
     }
 
@@ -109,11 +116,13 @@ export class WebSpeechSTT implements STTProvider {
     }
 
     rec.onend = () => {
-      // Called after abort() — if we have accumulated interim, promote to final
-      if (this.lastInterim.trim()) {
-        const text = this.lastInterim.trim()
-        this.lastInterim = ''
-        this.emit('final', text)
+      // Called after abort() — combine any accumulated native finals with
+      // the last interim to produce the complete transcript
+      const combined = (this.accumulatedFinal + ' ' + this.lastInterim).trim()
+      this.accumulatedFinal = ''
+      this.lastInterim = ''
+      if (combined) {
+        this.emit('final', combined)
       }
     }
 

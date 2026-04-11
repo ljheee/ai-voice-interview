@@ -87,6 +87,7 @@ export default function InterviewPage() {
   const handlePTTEndRef = useRef<() => void>(() => {})
   const vadFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const vadStatusRef = useRef<'idle' | 'recording' | 'processing'>('idle')
   const aiSentenceBufferRef = useRef<string>('')  // accumulates AI sentences per turn
   const aiTurnSentenceIdxRef = useRef<number>(0)  // sentence index within current AI turn (for SSML hint)
 
@@ -120,25 +121,38 @@ export default function InterviewPage() {
 
     provider.on('interim', setInterimText)
     provider.on('thinking', () => {
-      // Whisper worker is still inferring — reset the fallback timer so
-      // vadStatus stays 'processing' until the real final arrives
+      // Whisper worker is still inferring — extend the safety timeout to 15s
+      // so "识别中" stays visible while the ONNX model runs inference
       if (vadFallbackTimerRef.current) {
         clearTimeout(vadFallbackTimerRef.current)
         vadFallbackTimerRef.current = null
       }
-      vadFallbackTimerRef.current = setTimeout(
-        () => setVadStatus((s) => s === 'processing' ? 'idle' : s),
-        15_000  // generous timeout while worker runs inference
-      )
+      vadFallbackTimerRef.current = setTimeout(() => {
+        vadFallbackTimerRef.current = null
+        if (vadStatusRef.current === 'processing') {
+          vadStatusRef.current = 'idle'
+          setVadStatus('idle')
+        }
+      }, 15_000)
     })
     provider.on('final', (text) => {
-      console.log('[STT] final received, length:', text.length, 'trimmed:', JSON.stringify(text.trim().slice(0, 50)))
+      console.log('[STT] final received, status:', vadStatusRef.current, 'trimmed:', JSON.stringify(text.trim().slice(0, 50)))
+
+      // Guard: WebSpeech continuous mode fires native finals on silence even while
+      // the user is still holding PTT. Ignore them — only process finals that arrive
+      // after PTT is released (processing state) or as a genuine stop signal.
+      if (vadStatusRef.current === 'recording') {
+        console.log('[STT] native final ignored — PTT still held, waiting for release')
+        return
+      }
+
       if (vadFallbackTimerRef.current) {
         clearTimeout(vadFallbackTimerRef.current)
         vadFallbackTimerRef.current = null
       }
       setInterimText('')
       setFinalText(text)
+      vadStatusRef.current = 'idle'
       setVadStatus('idle')  // final arrived — stop showing 'processing'
       if (text.trim()) {
         setChatHistory((h) => [...h, { role: 'user', text }])
@@ -253,6 +267,7 @@ export default function InterviewPage() {
     setInterimText('')
     setFinalText('')
     setWsError(null)  // clear any previous LLM error on retry
+    vadStatusRef.current = 'recording'
     setVadStatus('recording')
     sttRef.current?.start()
     hardLimitTimerRef.current = setTimeout(() => handlePTTEndRef.current(), 300_000)
@@ -262,15 +277,21 @@ export default function InterviewPage() {
     clearCountdown()
     stopTurn()
     if (hardLimitTimerRef.current) { clearTimeout(hardLimitTimerRef.current); hardLimitTimerRef.current = null }
+    vadStatusRef.current = 'processing'
     setVadStatus('processing')
     sttRef.current?.stop()
-    // Initial fallback: 2s for WebSpeech (fast), will be extended to 15s by
-    // 'thinking' event if Whisper worker needs more time
+    // Fallback: keep showing "识别中" until final arrives (handled in STT 'final' callback).
+    // This timer is only a last-resort safety net for cases where WebSpeech never fires final
+    // (e.g. network error, browser bug). 10s is generous enough to cover normal latency.
     if (vadFallbackTimerRef.current) clearTimeout(vadFallbackTimerRef.current)
     vadFallbackTimerRef.current = setTimeout(() => {
-      console.warn('[VAD fallback] 2s timer fired — forcing idle (final may not have arrived yet)')
-      setVadStatus((s) => s === 'processing' ? 'idle' : s)
-    }, 2000)
+      console.warn('[STT] 10s safety timeout — final never arrived, forcing idle')
+      vadFallbackTimerRef.current = null
+      if (vadStatusRef.current === 'processing') {
+        vadStatusRef.current = 'idle'
+        setVadStatus('idle')
+      }
+    }, 10_000)
   }, [stopTurn, clearCountdown])
 
   useEffect(() => { handlePTTEndRef.current = handlePTTEnd }, [handlePTTEnd])
