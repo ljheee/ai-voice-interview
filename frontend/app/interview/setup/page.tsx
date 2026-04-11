@@ -46,16 +46,22 @@ export default function SetupPage() {
       if (file.name.endsWith('.txt')) {
         text = await file.text()
       } else if (file.name.endsWith('.pdf')) {
-        const pdfjsLib = await import('pdfjs-dist')
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-          `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
+        // Use legacy build which supports disableWorker option.
+        // This avoids all worker path issues in Next.js webpack bundling.
+        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+        pdfjsLib.GlobalWorkerOptions.workerSrc = ''  // disable worker, run in main thread
         const arrayBuffer = await file.arrayBuffer()
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+        const pdf = await pdfjsLib.getDocument({
+          data: arrayBuffer,
+          useWorkerFetch: false,
+          isEvalSupported: false,
+          useSystemFonts: true,
+        }).promise
         const pages = await Promise.all(
           Array.from({ length: pdf.numPages }, (_, i) =>
             pdf.getPage(i + 1)
               .then((p) => p.getTextContent())
-              .then((c) => c.items.map((it) => ('str' in it ? it.str : '')).join(' '))
+              .then((c) => c.items.map((it: { str?: string }) => it.str ?? '').join(' '))
           )
         )
         text = pages.join('\n')

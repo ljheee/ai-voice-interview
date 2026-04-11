@@ -58,6 +58,7 @@ export default function InterviewPage() {
   const [vadStatus, setVadStatus] = useState<'idle' | 'recording' | 'processing'>('idle')
   const [ending, setEnding] = useState(false)
   const [wsError, setWsError] = useState<string | null>(null)
+  const [pttCountdown, setPttCountdown] = useState<number | null>(null)
   const [chatHistory, setChatHistory] = useState<ChatEntry[]>([])
   const [currentStage, setCurrentStage] = useState<InterviewStage>(
     skipIntro ? 'project' : 'intro'
@@ -85,6 +86,7 @@ export default function InterviewPage() {
   const sendSessionEndRef = useRef<() => void>(() => {})
   const handlePTTEndRef = useRef<() => void>(() => {})
   const vadFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const aiSentenceBufferRef = useRef<string>('')  // accumulates AI sentences per turn
   const aiTurnSentenceIdxRef = useRef<number>(0)  // sentence index within current AI turn (for SSML hint)
 
@@ -196,6 +198,11 @@ export default function InterviewPage() {
         aiSentenceBufferRef.current = ''
         // Refresh candidates
         setCandidates(filterCandidates(allQuestionsRef.current, askedIds, targetSkillTags, targetCompanies))
+        // Safety net: if TTS queue is empty (all sentences already played),
+        // force aiSpeaking off now. If TTS is still playing, onIdle will handle it.
+        if (!ttsQueueRef.current?.isPlaying) {
+          setAiSpeaking(false)
+        }
       },
       onReport: (report) => {
         saveReport(report)
@@ -232,6 +239,14 @@ export default function InterviewPage() {
   // ── PTT handlers ──────────────────────────────────────────────────────────
   const hardLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const clearCountdown = useCallback(() => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current)
+      countdownIntervalRef.current = null
+    }
+    setPttCountdown(null)
+  }, [])
+
   const handlePTTStart = useCallback(() => {
     startTimer()
     startTurn()
@@ -244,6 +259,7 @@ export default function InterviewPage() {
   }, [startTimer, startTurn])
 
   const handlePTTEnd = useCallback(() => {
+    clearCountdown()
     stopTurn()
     if (hardLimitTimerRef.current) { clearTimeout(hardLimitTimerRef.current); hardLimitTimerRef.current = null }
     setVadStatus('processing')
@@ -255,7 +271,7 @@ export default function InterviewPage() {
       console.warn('[VAD fallback] 2s timer fired — forcing idle (final may not have arrived yet)')
       setVadStatus((s) => s === 'processing' ? 'idle' : s)
     }, 2000)
-  }, [stopTurn])
+  }, [stopTurn, clearCountdown])
 
   useEffect(() => { handlePTTEndRef.current = handlePTTEnd }, [handlePTTEnd])
 
@@ -263,7 +279,24 @@ export default function InterviewPage() {
   useVADFallback({
     recording: vadStatus === 'recording',
     enabled: sttEngine === 'webspeech',
-    onSpeechEnd: () => handlePTTEndRef.current(),
+    onSilenceStart: () => {
+      // Start 3-second countdown; auto-release PTT when it hits 0
+      clearCountdown()
+      setPttCountdown(3)
+      let remaining = 3
+      countdownIntervalRef.current = setInterval(() => {
+        remaining -= 1
+        if (remaining <= 0) {
+          clearCountdown()
+          handlePTTEndRef.current()
+        } else {
+          setPttCountdown(remaining)
+        }
+      }, 1000)
+    },
+    onSilenceCancel: () => {
+      clearCountdown()
+    },
   })
 
   // ── End interview ─────────────────────────────────────────────────────────
@@ -365,13 +398,17 @@ export default function InterviewPage() {
         </div>
       )}
 
-      {/* Main interview area */}
-      <main className="flex-1 flex flex-col items-center justify-center gap-6 p-6">
-        {timerState.elapsedSec > 0 && (
-          <TimerBar elapsedSec={timerState.elapsedSec} totalSec={timerState.totalSec} />
-        )}
+      {/* Main interview area — fixed layout, button never moves */}
+      <main className="flex-1 flex flex-col items-center p-4 pt-6 overflow-hidden">
+        {/* Timer — fixed height, only visible after start */}
+        <div className="w-full max-w-lg h-6 shrink-0 mb-4">
+          {timerState.elapsedSec > 0 && (
+            <TimerBar elapsedSec={timerState.elapsedSec} totalSec={timerState.totalSec} />
+          )}
+        </div>
 
-        <div className="h-10 flex items-center">
+        {/* Status line — fixed height */}
+        <div className="h-8 shrink-0 flex items-center justify-center mb-4">
           {ending ? (
             <p className="text-sm text-gray-400">正在生成评测报告…</p>
           ) : aiSpeaking ? (
@@ -389,17 +426,22 @@ export default function InterviewPage() {
           )}
         </div>
 
-        <div className="w-full max-w-lg bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        {/* Subtitle box — fixed height, text scrolls inside */}
+        <div className="w-full max-w-lg bg-white rounded-xl shadow-sm border border-gray-100 p-4 shrink-0 mb-8">
           <Subtitle interim={interimText} final={finalText} />
         </div>
 
-        <PTTButton
-          onPressStart={handlePTTStart}
-          onPressEnd={handlePTTEnd}
-          disabled={aiSpeaking || wsStatus !== 'ready' || ending || vadStatus === 'processing'}
-        />
+        {/* PTT button — always at same vertical position */}
+        <div className="shrink-0">
+          <PTTButton
+            onPressStart={handlePTTStart}
+            onPressEnd={handlePTTEnd}
+            disabled={aiSpeaking || wsStatus !== 'ready' || ending || vadStatus === 'processing'}
+            countdown={pttCountdown}
+          />
+        </div>
 
-        <p className="text-xs text-gray-400">按住按钮或按空格键开始说话</p>
+        <p className="text-xs text-gray-400 mt-4 shrink-0">按住按钮或按空格键开始说话</p>
       </main>
 
       {/* Chat history drawer */}

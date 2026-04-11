@@ -18,6 +18,11 @@ interface TTSTask {
  * Why no skipping: In an interview, skipping a sentence breaks semantic context.
  * The user must hear the complete question even if audio quality degrades.
  */
+// How long to wait after queue drains before firing onIdle.
+// Absorbs the gap between sentences in SpeechSynthesis so the PTT button
+// doesn't flicker blue between every sentence.
+const IDLE_DEBOUNCE_MS = 800  // system TTS inter-sentence gap can be 300-600ms
+
 export class TTSQueue {
   private queue: TTSTask[] = []
   private playing = false
@@ -25,6 +30,7 @@ export class TTSQueue {
   private activeRequests = 0
   private requestQueue: (() => void)[] = []  // waiters for semaphore
   private idleCallback: (() => void) | null = null
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(provider: TTSProvider | null) {
     this.provider = provider
@@ -37,6 +43,12 @@ export class TTSQueue {
    */
   onIdle(cb: () => void): void {
     this.idleCallback = cb
+    // Cancel any pending idle timer when a new callback is registered
+    // (happens when a new sentence arrives mid-playback)
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
+    }
   }
 
   private acquireSlot(): Promise<void> {
@@ -68,6 +80,11 @@ export class TTSQueue {
       audioPromise: this._fetch(text, hint),
     }
     this.queue.push(task)
+    // If idle debounce timer is pending, cancel it — we're not actually idle
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
+    }
     if (!this.playing) this._playNext()
   }
 
@@ -77,6 +94,7 @@ export class TTSQueue {
     this.requestQueue = []
     this.playing = false
     this.idleCallback = null
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null }
     if (typeof window !== 'undefined') {
       speechSynthesis.cancel()
     }
@@ -103,9 +121,16 @@ export class TTSQueue {
   private async _playNext(): Promise<void> {
     if (this.queue.length === 0) {
       this.playing = false
-      const cb = this.idleCallback
-      this.idleCallback = null
-      cb?.()
+      // Debounce the idle callback — absorbs inter-sentence gaps in SpeechSynthesis
+      // so the PTT button doesn't flicker between sentences.
+      if (this.idleCallback) {
+        const cb = this.idleCallback
+        this.idleCallback = null
+        this.idleTimer = setTimeout(() => {
+          this.idleTimer = null
+          cb()
+        }, IDLE_DEBOUNCE_MS)
+      }
       return
     }
 

@@ -6,6 +6,8 @@ interface PTTButtonProps {
   onPressStart: () => void
   onPressEnd: () => void
   disabled?: boolean
+  /** Countdown seconds remaining (1-3). null = not counting down. */
+  countdown?: number | null
 }
 
 /**
@@ -16,7 +18,7 @@ interface PTTButtonProps {
  * All event handlers (including window-level mouseup/touchend/keyup)
  * read state via refs to avoid stale closures.
  */
-export function PTTButton({ onPressStart, onPressEnd, disabled = false }: PTTButtonProps) {
+export function PTTButton({ onPressStart, onPressEnd, disabled = false, countdown = null }: PTTButtonProps) {
   const [pressed, setPressed] = useState(false)
   const pressedRef = useRef(false)
 
@@ -98,7 +100,13 @@ export function PTTButton({ onPressStart, onPressEnd, disabled = false }: PTTBut
       `}
       aria-label={pressed ? '录音中…松开结束' : '按住说话（空格键）'}
     >
-      {pressed ? (
+      {pressed && countdown != null ? (
+        /* Countdown overlay — silence detected, auto-release imminent */
+        <span className="flex flex-col items-center gap-0.5">
+          <span className="text-3xl font-bold leading-none tabular-nums">{countdown}</span>
+          <span className="text-xs opacity-80">继续说话可取消</span>
+        </span>
+      ) : pressed ? (
         <span className="flex flex-col items-center gap-1">
           <span className="w-3 h-3 rounded-full bg-white animate-pulse" />
           <span className="text-xs">松开</span>

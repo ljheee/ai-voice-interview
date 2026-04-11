@@ -4,17 +4,23 @@ import { useEffect, useRef } from 'react'
 import '@/lib/ort-init'  // must be before any onnxruntime-web usage
 
 interface UseVADFallbackOptions {
-  /** Called when VAD detects end of speech (~3s silence) */
-  onSpeechEnd: () => void
   /** Only active while recording is true */
   recording: boolean
   /**
    * Set to true when using WebSpeechSTT (Chrome).
-   * WebSpeechSTT already holds the mic; VAD opens its own stream independently.
-   * Set to false (Whisper mode) to disable VAD — Whisper's MediaRecorder
-   * already owns the mic and fires its own onstop event.
+   * Set to false (Whisper mode) to disable VAD entirely.
    */
   enabled: boolean
+  /**
+   * Called when VAD detects silence start (user stopped speaking).
+   * The caller should start a countdown timer here.
+   */
+  onSilenceStart: () => void
+  /**
+   * Called when VAD detects speech resumed during countdown.
+   * The caller should cancel the countdown timer here.
+   */
+  onSilenceCancel: () => void
 }
 
 interface VADInstance {
@@ -24,20 +30,25 @@ interface VADInstance {
 }
 
 /**
- * VAD-based PTT fallback (Silero VAD via @ricky0123/vad-web).
- * Auto-releases PTT after ~3s of silence.
+ * VAD-based silence detection (Silero VAD via @ricky0123/vad-web).
  *
- * The VAD instance is created once and reused across PTT presses —
- * model and worklet are loaded only on first use, subsequent presses
- * just call start()/pause() with no network requests.
+ * Behaviour:
+ * - While user is pressing PTT (recording=true), VAD monitors audio.
+ * - When silence is detected → fires onSilenceStart (caller starts countdown).
+ * - When speech resumes   → fires onSilenceCancel (caller cancels countdown).
+ * - PTT auto-release is handled by the caller's countdown, NOT by VAD directly.
+ *   This ensures the physical button always takes priority.
  *
+ * The VAD instance is created once and reused — model loads only on first use.
  * Only used in WebSpeechSTT mode.
  */
-export function useVADFallback({ onSpeechEnd, recording, enabled }: UseVADFallbackOptions) {
+export function useVADFallback({ recording, enabled, onSilenceStart, onSilenceCancel }: UseVADFallbackOptions) {
   const vadRef = useRef<VADInstance | null>(null)
   const loadingRef = useRef(false)
-  const onSpeechEndRef = useRef(onSpeechEnd)
-  onSpeechEndRef.current = onSpeechEnd
+  const onSilenceStartRef = useRef(onSilenceStart)
+  const onSilenceCancelRef = useRef(onSilenceCancel)
+  onSilenceStartRef.current = onSilenceStart
+  onSilenceCancelRef.current = onSilenceCancel
 
   // Initialize VAD once when enabled becomes true
   useEffect(() => {
@@ -56,20 +67,29 @@ export function useVADFallback({ onSpeechEnd, recording, enabled }: UseVADFallba
         const { MicVAD } = await import('@ricky0123/vad-web')
 
         const vad = await MicVAD.new({
-          positiveSpeechThreshold: 0.90,
-          negativeSpeechThreshold: 0.75,
-          minSpeechFrames: 3,
-          redemptionFrames: 8,
-          // Explicitly point to /public files — avoids assetPath() 404s
+          positiveSpeechThreshold: 0.92,
+          negativeSpeechThreshold: 0.70,
+          minSpeechFrames: 5,
+          redemptionFrames: 25,  // ~1.25s of silence before firing onSpeechEnd
           workletURL: '/vad.worklet.bundle.min.js',
           modelURL: '/silero_vad.onnx',
-          onSpeechEnd: () => onSpeechEndRef.current(),
+          // Silence confirmed → start countdown
+          onSpeechEnd: () => {
+            if (recording) onSilenceStartRef.current()
+          },
+          // Voice resumed → cancel countdown
+          onSpeechStart: () => {
+            onSilenceCancelRef.current()
+          },
+          // Misfire (too short to count) → also cancel countdown
+          onVADMisfire: () => {
+            onSilenceCancelRef.current()
+          },
         })
 
         vadRef.current = vad
         loadingRef.current = false
 
-        // If recording already started while we were loading, start VAD now
         if (recording) vad.start()
       } catch (err) {
         console.warn('VAD fallback unavailable:', err)
@@ -86,7 +106,7 @@ export function useVADFallback({ onSpeechEnd, recording, enabled }: UseVADFallba
     }
   }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Start/pause VAD based on recording state — no re-initialization
+  // Start/pause VAD based on recording state
   useEffect(() => {
     if (!enabled || !vadRef.current) return
     if (recording) {
