@@ -34,15 +34,23 @@ class OrtStaticPlugin {
     }
 
     // afterEmit: fires after every build/rebuild (dev + prod)
-    // outputOptions.path = .next/static/chunks for the client bundle
+    // In Next.js, compilation.outputOptions.path may point to .next/ root,
+    // but the browser chunks always live in .next/static/chunks/.
+    // We derive the chunks path from the compiler context instead.
     compiler.hooks.afterEmit.tapAsync('OrtStaticPlugin', (compilation, callback) => {
-      copyFiles(compilation.outputOptions.path)
+      // Try compilation output path first; if it doesn't end with 'chunks', append static/chunks
+      const outPath = compilation.outputOptions.path ?? ''
+      const chunksPath = outPath.endsWith('chunks')
+        ? outPath
+        : path.join(__dirname, '.next', 'static', 'chunks')
+      copyFiles(chunksPath)
       callback()
     })
 
     // watchRun: fires at the start of each incremental rebuild in dev
     compiler.hooks.watchRun.tapAsync('OrtStaticPlugin', (compiler, callback) => {
-      if (compiler.outputPath) copyFiles(compiler.outputPath)
+      const chunksPath = path.join(__dirname, '.next', 'static', 'chunks')
+      copyFiles(chunksPath)
       callback()
     })
   }
