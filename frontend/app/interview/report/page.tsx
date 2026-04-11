@@ -13,7 +13,9 @@ export default function ReportPage() {
     const r = loadReport()
     if (!r) { router.replace('/interview/setup'); return }
     setReport(r)
-    clearReport()  // prevent stale data on back-navigation
+    // NOTE: do NOT clearReport() here — React Strict Mode runs effects twice,
+    // which would delete the data before the second run can read it, causing
+    // an immediate redirect to /interview/setup.
   }, [router])
 
   if (!report) {
@@ -34,7 +36,7 @@ export default function ReportPage() {
       <header className="bg-white border-b border-gray-200 px-4 h-14 flex items-center justify-between">
         <h1 className="font-bold text-gray-900">面试评测报告</h1>
         <button
-          onClick={() => router.push('/interview/setup')}
+          onClick={() => { clearReport(); router.push('/interview/setup') }}
           className="text-sm text-blue-600 hover:text-blue-700"
         >
           再次面试

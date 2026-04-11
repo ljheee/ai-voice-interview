@@ -247,15 +247,22 @@ export async function generateReport(session: InterviewSession): Promise<Evaluat
   "duration_min": ${durationMin}
 }`
 
-  // Race LLM against a 25s timeout — always return a report, never throw
-  const REPORT_TIMEOUT = 25_000
+  // Use streaming to collect the full report — avoids non-streaming timeout issues.
+  // Stream the response and accumulate all chunks, with a generous 60s overall timeout.
+  const REPORT_TIMEOUT = 60_000
   let raw: string
   try {
     raw = await Promise.race([
-      providerChain.generateContent(
-        '你是一位资深技术面试官，需要根据面试记录生成结构化评测报告。只输出合法 JSON，不要包含任何 Markdown 代码块或额外文字。',
-        prompt
-      ),
+      (async () => {
+        let result = ''
+        for await (const chunk of providerChain.streamResponse(
+          '你是一位资深技术面试官，需要根据面试记录生成结构化评测报告。只输出合法 JSON，不要包含任何 Markdown 代码块或额外文字。',
+          prompt
+        )) {
+          result += chunk
+        }
+        return result
+      })(),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('report timeout')), REPORT_TIMEOUT)
       ),
