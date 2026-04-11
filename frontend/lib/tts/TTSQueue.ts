@@ -6,14 +6,16 @@ import type { TTSProvider } from './TTSProvider'
 interface TTSTask {
   text: string
   hint: SentenceHint
-  audioPromise: Promise<AudioBuffer>
+  // Resolves to AudioBuffer if provider succeeded, null if no provider or fetch failed.
+  // Never rejects — errors are swallowed here and handled as null in _playNext.
+  audioPromise: Promise<AudioBuffer | null>
 }
 
 /**
  * TTS playback queue.
  * - Parallel prefetch: all TTS requests fire immediately on push()
  * - Sequential playback: awaits each task's audioPromise in order (no skipping)
- * - Fallback: if provider fails, degrades to SpeechSynthesis (never skips)
+ * - Fallback: if provider fails or is absent, degrades to SpeechSynthesis (never skips)
  *
  * Why no skipping: In an interview, skipping a sentence breaks semantic context.
  * The user must hear the complete question even if audio quality degrades.
@@ -43,12 +45,9 @@ export class TTSQueue {
    */
   onIdle(cb: () => void): void {
     this.idleCallback = cb
-    // Cancel any pending idle timer when a new callback is registered
-    // (happens when a new sentence arrives mid-playback)
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer)
-      this.idleTimer = null
-    }
+    // If the idle debounce timer is already running (queue drained, waiting to fire),
+    // do NOT cancel it — just update the callback so the timer fires the new one.
+    // Only cancel the timer if new audio is being pushed (handled in push()).
   }
 
   private acquireSlot(): Promise<void> {
@@ -74,18 +73,23 @@ export class TTSQueue {
    */
   push(text: string, hint: SentenceHint = 'default'): void {
     if (!text.trim()) return
-    const task: TTSTask = {
-      text,
-      hint,
-      audioPromise: this._fetch(text, hint),
-    }
+
+    // audioPromise always resolves (never rejects) — null means "use SpeechSynthesis fallback"
+    const audioPromise: Promise<AudioBuffer | null> = this.provider
+      ? this._fetch(text, hint)
+      : Promise.resolve(null)
+
+    const task: TTSTask = { text, hint, audioPromise }
     this.queue.push(task)
     // If idle debounce timer is pending, cancel it — we're not actually idle
     if (this.idleTimer) {
       clearTimeout(this.idleTimer)
       this.idleTimer = null
     }
-    if (!this.playing) this._playNext()
+    if (!this.playing) {
+      this.playing = true  // set before async _playNext to prevent concurrent calls
+      this._playNext()
+    }
   }
 
   /** Clear queue and stop current playback */
@@ -104,67 +108,82 @@ export class TTSQueue {
     return this.playing
   }
 
+  /** True if playing or has items queued (i.e. audio is not yet fully done) */
+  get isActive(): boolean {
+    return this.playing || this.queue.length > 0
+  }
+
   get hasProvider(): boolean {
     return this.provider !== null
   }
 
-  private async _fetch(text: string, hint: SentenceHint): Promise<AudioBuffer> {
-    if (!this.provider) return Promise.reject(new Error('no-provider'))
+  // Returns null on failure instead of rejecting — callers treat null as "use fallback"
+  private async _fetch(text: string, hint: SentenceHint): Promise<AudioBuffer | null> {
+    if (!this.provider) return null
     await this.acquireSlot()
     try {
       return await this.provider.synthesize(text, hint)
+    } catch {
+      return null
     } finally {
       this.releaseSlot()
     }
   }
 
   private async _playNext(): Promise<void> {
-    if (this.queue.length === 0) {
-      this.playing = false
-      // Debounce the idle callback — absorbs inter-sentence gaps in SpeechSynthesis
-      // so the PTT button doesn't flicker between sentences.
-      if (this.idleCallback) {
-        const cb = this.idleCallback
-        this.idleCallback = null
-        this.idleTimer = setTimeout(() => {
-          this.idleTimer = null
-          cb()
-        }, IDLE_DEBOUNCE_MS)
+    // Single loop — never recurse, never call _playNext() from within _playNext().
+    // playing=true is set by push() before calling us, so no concurrent entry possible.
+    while (this.queue.length > 0) {
+      const task = this.queue.shift()!
+      const audioBuffer = await task.audioPromise  // always resolves, never rejects
+
+      if (audioBuffer) {
+        // Provider succeeded — play via AudioContext
+        try {
+          const audioContext = getAudioContext()
+          if (audioContext.state === 'suspended') {
+            await audioContext.resume()
+          }
+          await new Promise<void>((resolve) => {
+            const source = audioContext.createBufferSource()
+            source.buffer = audioBuffer
+            source.connect(audioContext.destination)
+            source.onended = () => resolve()
+            source.start()
+          })
+        } catch {
+          // AudioContext playback failed — fall through to SpeechSynthesis below
+          await this._speakFallback(task)
+        }
+      } else {
+        // No provider or fetch failed — use SpeechSynthesis
+        await this._speakFallback(task)
       }
-      return
     }
 
-    this.playing = true
-    const task = this.queue.shift()!
-
-    try {
-      const audioBuffer = await task.audioPromise
-      const audioContext = getAudioContext()
-
-      // Resume context if suspended (browser autoplay policy)
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume()
-      }
-
-      await new Promise<void>((resolve) => {
-        const source = audioContext.createBufferSource()
-        source.buffer = audioBuffer
-        source.connect(audioContext.destination)
-        source.onended = () => resolve()
-        source.start()
-      })
-    } catch {
-      // Provider failed — fallback to SpeechSynthesis, never skip
-      await new Promise<void>((resolve) => {
-        const utter = new SpeechSynthesisUtterance(task.text)
-        utter.lang = 'zh-CN'
-        utter.rate = task.hint === 'first' ? 0.8 : task.hint === 'question' ? 0.85 : 0.9
-        utter.onend = () => resolve()
-        utter.onerror = () => resolve()
-        speechSynthesis.speak(utter)
-      })
+    // Queue drained
+    this.playing = false
+    if (this.idleCallback) {
+      const cb = this.idleCallback
+      this.idleCallback = null
+      this.idleTimer = setTimeout(() => {
+        this.idleTimer = null
+        cb()
+      }, IDLE_DEBOUNCE_MS)
     }
+  }
 
-    this._playNext()
+  private _speakFallback(task: TTSTask): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const utter = new SpeechSynthesisUtterance(task.text)
+      utter.lang = 'zh-CN'
+      utter.rate = task.hint === 'first' ? 0.8 : task.hint === 'question' ? 0.85 : 0.9
+      // Safety timeout: estimate ~300ms per Chinese character, min 2s, max 15s.
+      const timeoutMs = Math.min(15000, Math.max(2000, task.text.length * 300))
+      const timer = setTimeout(resolve, timeoutMs)
+      utter.onend = () => { clearTimeout(timer); resolve() }
+      utter.onerror = () => { clearTimeout(timer); resolve() }
+      speechSynthesis.speak(utter)
+    })
   }
 }

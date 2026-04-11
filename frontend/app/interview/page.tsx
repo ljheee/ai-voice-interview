@@ -187,20 +187,7 @@ export default function InterviewPage() {
         aiTurnSentenceIdxRef.current = idx + 1
         const hint = idx === 0 ? 'first' : /[？?]\s*$/.test(text) ? 'question' : 'default'
 
-        // Lazy re-init: if queue has no provider but key is now available
-        // (Zustand persist hydrates after first render)
-        if (!ttsQueueRef.current?.hasProvider) {
-          const { ttsEngine: e, murfApiKey: mk, azureTTSKey: ak, azureTTSRegion: ar } =
-            useSettingsStore.getState()
-          const p =
-            e === 'murf'  ? (mk  ? new MurfTTSProvider(mk) : null) :
-            e === 'azure' ? (ak  ? new AzureTTSProvider(ak, ar) : null) :
-            null
-          ttsQueueRef.current = new TTSQueue(p)
-        }
         ttsQueueRef.current?.push(text, hint)
-        // Re-register onIdle each sentence so the last one always fires it.
-        // TTSQueue calls this exactly once when the queue drains — no polling needed.
         ttsQueueRef.current?.onIdle(() => setAiSpeaking(false))
       },
       onTurnEnd: (askedIds) => {
@@ -212,9 +199,11 @@ export default function InterviewPage() {
         aiSentenceBufferRef.current = ''
         // Refresh candidates
         setCandidates(filterCandidates(allQuestionsRef.current, askedIds, targetSkillTags, targetCompanies))
-        // Safety net: if TTS queue is empty (all sentences already played),
-        // force aiSpeaking off now. If TTS is still playing, onIdle will handle it.
-        if (!ttsQueueRef.current?.isPlaying) {
+        // Re-register onIdle so it fires when TTS finishes this turn's sentences.
+        // If TTS is already idle (no sentences were pushed), fire immediately.
+        if (ttsQueueRef.current?.isActive) {
+          ttsQueueRef.current.onIdle(() => setAiSpeaking(false))
+        } else {
           setAiSpeaking(false)
         }
       },
