@@ -17,7 +17,6 @@ export default function SetupPage() {
   const {
     targetCompanies, targetSkillTags, totalInterviewMinutes,
     resumeText: storedResumeText, skipIntro: storedSkipIntro,
-    useQuestionBank: storedUseQB, questionBankUrl: storedQBUrl,
     setInterviewProfile, ttsEngine, setTTSEngine,
     murfApiKey, setMurfApiKey, azureTTSKey, azureTTSRegion, setAzureTTS,
   } = useSettingsStore()
@@ -27,8 +26,6 @@ export default function SetupPage() {
   const [duration, setDuration] = useState(totalInterviewMinutes)
   const [resumeText, setResumeText] = useState(storedResumeText)
   const [skipIntro, setSkipIntro] = useState(storedSkipIntro)
-  const [useQuestionBank, setUseQuestionBank] = useState(storedUseQB)
-  const [questionBankUrl, setQuestionBankUrl] = useState(storedQBUrl)
   const [fileError, setFileError] = useState('')
   const [fileLoading, setFileLoading] = useState(false)
 
@@ -89,7 +86,7 @@ export default function SetupPage() {
   }
 
   function handleStart() {
-    setInterviewProfile(companies, skills, duration, resumeText, skipIntro, useQuestionBank, questionBankUrl)
+    setInterviewProfile(companies, skills, duration, resumeText, skipIntro, false, '', '')
     router.push('/interview')
   }
 
@@ -208,31 +205,6 @@ export default function SetupPage() {
               <p className="text-xs text-gray-400 mt-0.5">适合已熟悉岗位要求、想直接练习技术问答的场景</p>
             </div>
           </label>
-        </section>
-
-        {/* Question bank */}
-        <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-3">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useQuestionBank}
-              onChange={(e) => setUseQuestionBank(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 accent-blue-600"
-            />
-            <div>
-              <p className="text-sm font-medium text-gray-800">使用外部题库</p>
-              <p className="text-xs text-gray-400 mt-0.5">关闭时由 LLM 完全自主出题</p>
-            </div>
-          </label>
-          {useQuestionBank && (
-            <input
-              type="text"
-              placeholder="题库 API 地址（如 http://localhost:8000）"
-              className="w-full text-sm border border-gray-200 rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-300"
-              value={questionBankUrl}
-              onChange={(e) => setQuestionBankUrl(e.target.value)}
-            />
-          )}
         </section>
 
         {/* Voice settings */}

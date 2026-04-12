@@ -24,8 +24,9 @@ interface SettingsState {
   totalInterviewMinutes: number
   resumeText: string
   skipIntro: boolean
-  useQuestionBank: boolean     // whether to fetch from external question bank API
-  questionBankUrl: string      // base URL of the question bank API
+  useQuestionBank: boolean     // whether to fetch from Supabase question bank
+  supabaseUrl: string          // Supabase project URL
+  supabaseAnonKey: string      // Supabase anon/role key
   setInterviewProfile: (
     companies: string[],
     skillTags: string[],
@@ -33,7 +34,8 @@ interface SettingsState {
     resumeText: string,
     skipIntro: boolean,
     useQuestionBank: boolean,
-    questionBankUrl: string,
+    supabaseUrl: string,
+    supabaseAnonKey: string,
   ) => void
 }
 
@@ -56,9 +58,10 @@ export const useSettingsStore = create<SettingsState>()(
       resumeText: '',
       skipIntro: false,
       useQuestionBank: false,
-      questionBankUrl: 'http://localhost:8000',
-      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro, useQuestionBank, questionBankUrl) =>
-        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro, useQuestionBank, questionBankUrl }),
+      supabaseUrl: '',
+      supabaseAnonKey: '',
+      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro, useQuestionBank, supabaseUrl, supabaseAnonKey) =>
+        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro, useQuestionBank, supabaseUrl, supabaseAnonKey }),
     }),
     { name: 'ai-interview-settings' }
   )

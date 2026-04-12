@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback, useState } from 'react'
-import type { ServerMessage, ThinkingPayload, CandidateQuestion, EvaluationReport } from '../types'
+import type { ServerMessage, ThinkingPayload, EvaluationReport } from '../types'
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001/ws/interview'
@@ -18,7 +18,6 @@ export type WSStatus = 'connecting' | 'ready' | 'error' | 'closed'
 
 export function useInterviewWS(
   sessionId: string,
-  candidateQuestions: CandidateQuestion[],
   handlers: Handlers,
   totalMinutes = 90,
   resumeText = '',
@@ -49,7 +48,6 @@ export function useInterviewWS(
         ws.send(JSON.stringify({
           type: 'session_init',
           sessionId,
-          candidateQuestions,
           totalMinutes,
           resumeText: resumeText || undefined,
           skipIntro: skipIntro || undefined,
