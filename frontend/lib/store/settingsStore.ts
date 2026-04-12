@@ -18,22 +18,18 @@ interface SettingsState {
   setAzureTTS: (key: string, region: string) => void
   setTTSEngine: (engine: TTSEngine) => void
 
-  // Interview profile (set on setup page, used by filterCandidates)
-  targetCompanies: string[]    // e.g. ["字节", "阿里"]
-  targetSkillTags: string[]    // e.g. ["Redis", "分布式"]
+  // Interview profile
+  targetCompanies: string[]
+  targetSkillTags: string[]
   totalInterviewMinutes: number
   resumeText: string
   skipIntro: boolean
-  useQuestionBank: boolean     // whether to fetch from external question bank API
-  questionBankUrl: string      // base URL of the question bank API
   setInterviewProfile: (
     companies: string[],
     skillTags: string[],
     totalMinutes: number,
     resumeText: string,
     skipIntro: boolean,
-    useQuestionBank: boolean,
-    questionBankUrl: string,
   ) => void
 }
 
@@ -55,10 +51,8 @@ export const useSettingsStore = create<SettingsState>()(
       totalInterviewMinutes: 90,
       resumeText: '',
       skipIntro: false,
-      useQuestionBank: false,
-      questionBankUrl: 'http://localhost:8000',
-      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro, useQuestionBank, questionBankUrl) =>
-        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro, useQuestionBank, questionBankUrl }),
+      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro) =>
+        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro }),
     }),
     { name: 'ai-interview-settings' }
   )

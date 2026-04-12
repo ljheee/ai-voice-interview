@@ -21,14 +21,14 @@ export interface InterviewSession {
   pendingTopics: string[]
   turnCount: number
   startedAt: number
-  candidateQuestions: CandidateQuestion[]
   totalMinutes: number
   resumeText?: string
   skipIntro: boolean
   currentStage: InterviewStage
   stageStartedAt: number   // timestamp (ms) when current stage was entered
-  // Accumulated score delta across all turns
   totalScore: number
+  // next_focus from last AI thinking — used to query Supabase on next turn
+  nextFocus?: string
 }
 
 // ─── LLM output ───────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ export interface EvaluationReport {
 
 // Client → Server
 export type ClientMessage =
-  | { type: 'session_init'; sessionId: string; candidateQuestions: CandidateQuestion[]; totalMinutes?: number; resumeText?: string; skipIntro?: boolean }
+  | { type: 'session_init'; sessionId: string; totalMinutes?: number; resumeText?: string; skipIntro?: boolean }
   | { type: 'user_turn'; sessionId: string; text: string }
   | { type: 'session_end'; sessionId: string }
 

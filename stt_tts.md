@@ -227,98 +227,90 @@ function extractSentences(text) {
 
 ### 核心原则
 
-**后端先筛选（结构化逻辑），再把候选题交给 LLM 决策（选哪道+怎么问）。**
+**AI thinking 确定下一步考察方向（next_focus），服务端按需查库，候选题注入下一轮 prompt。**
 
 ```
-简历解析结果 + 面试上下文
-        ↓
-   [后端筛选层]          ← 纯逻辑，不用LLM
-   按技能/公司/难度过滤
-   按 frequency 排序
-   排除已问过的题（askedIds）
-        ↓
-   候选题目（5-10条）
-        ↓
-   [LLM决策层]           ← 只做"选哪道+怎么问"
-   结合对话上下文选题
-   生成自然的过渡语
+用户回答
+  ↓
+AI 输出 thinking.next_focus = "Redis 持久化"
+  ↓
+服务端用 next_focus 查 Supabase（overlaps tags）
+  ↓
+候选题目（≤5条）注入下一轮 systemPrompt
+  ↓
+AI 从中选题 或 自主追问
 ```
 
-### 题库数据结构
+### 题库开关
+
+通过服务端环境变量控制，前端无感知：
+
+```env
+# 有值则开启，unset 或空值则关闭（无需额外 flag）
+QUESTION_SEARCH_URL=https://interview-crawler-production.up.railway.app/api/questions/search
+```
+
+关闭时 LLM 完全自主出题，开启时仅在 `skill` 阶段查库（intro/project/closing 阶段不出技术题，查了也无用）。
+
+### 查询时机与逻辑
+
+每轮 `user_turn` 到达时：
+
+1. `applyThinking()` 将上一轮的 `next_focus` 存入 `session.nextFocus`
+2. `streamInterviewResponse()` 在构建 prompt 前调用 `queryQuestionsByFocus()`
+3. 结果注入 `systemPrompt` 候选题目区块，AI 据此选题
 
 ```typescript
+// server/src/supabaseQuery.ts
+// next_focus 拆分为关键词，overlaps 匹配题目 tags 字段，按 frequency 降序，排除已问 IDs
+export async function queryQuestionsByFocus(
+  focus: string,
+  excludeIds: string[],
+  limit = 5,
+): Promise<CandidateQuestion[]>
+```
+
+若 Supabase 未配置或查询失败，静默返回空数组，LLM 自主出题，不影响面试流程。
+
+### 题库数据结构（来自 interview-crawler）
+
+```typescript
+// questions_with_companies 视图（Supabase）
 interface Question {
   id: string
-  content: string
-  companies: string[]   // ["字节", "阿里", "腾讯"]
-  frequency: number     // 出题次数
-  category: string      // 分布式/并发/MySQL...
+  title: string           // 题目正文（注入 prompt 时作为 content）
+  tags: string[]          // ["Redis", "持久化"] — 用于 overlaps 匹配
+  categories: string[]    // ["缓存", "中间件"]
   difficulty: 'easy' | 'medium' | 'hard'
-  tags: string[]        // ["Redis", "缓存穿透"]
+  frequency: number       // 在爬取数据中出现次数，越高越高频
+  companies: string[]     // 来源公司
 }
 ```
 
-### 候选题筛选逻辑（前端）
+### 注入 Prompt 格式
 
-筛选在前端执行（`lib/interview/filterCandidates.ts`），结果随 `session_init` 发给服务端，随每轮 `turn_end` 返回的 `askedIds` 刷新：
-
-```typescript
-// lib/interview/filterCandidates.ts
-function filterCandidates(
-  questions: Question[],
-  askedIds: string[],
-  targetTags?: string[],
-  targetCompanies?: string[]
-): CandidateQuestion[] {
-  return questions
-    .filter(q => !askedIds.includes(q.id))
-    .filter(q => !targetTags?.length || q.tags.some(t => targetTags.includes(t)))
-    .filter(q => !targetCompanies?.length || q.companies.some(c => targetCompanies.includes(c)))
-    .sort((a, b) => b.frequency - a.frequency)
-    .slice(0, 8)  // 只取前8条给LLM
-    .map(q => ({ id: q.id, content: q.content, companies: q.companies,
-                 frequency: q.frequency, category: q.category,
-                 difficulty: q.difficulty, tags: q.tags }))
-}
-```
-
-**selected_id 校验**：服务端 `sessionStore.applyThinking()` 在写入 `askedIds` 前校验 ID 是否存在于 `candidateQuestions`，防止 LLM 幻觉出无效 ID：
-
-```typescript
-const validSelectedId =
-  selectedId && s.candidateQuestions.some(q => q.id === selectedId)
-    ? selectedId : undefined
-```
-
-### 注入 LLM Prompt 格式
+只注入题目文本和元数据，不注入详细解析（控制 prompt 长度）：
 
 ```
-## 候选题目（按频率排序）
-1. [ID:q_001] Redis缓存穿透如何解决？
-   公司：字节(23次)、阿里(18次) | 难度：medium
+## 候选题目（与当前考察方向相关，skill 阶段优先使用）
+1. [ID:q_001] Redis AOF 和 RDB 的区别是什么？
+   公司：字节、美团 | 难度：medium | 标签：Redis, 持久化
 
-2. [ID:q_002] 分布式锁的实现方案有哪些？
-   公司：字节(31次)、美团(15次) | 难度：hard
-
-## 当前对话上下文
-已考察维度：并发、索引
-待考察维度：分布式、缓存
-
-## 指令
-从候选题目中选择最合适的一道，输出：
-{"action": "next_question", "selected_id": "q_002", "intro": "您刚才提到了分布式场景，那我想问一下..."}
+2. [ID:q_002] Redis 持久化对性能的影响如何评估？
+   公司：阿里 | 难度：hard | 标签：Redis, 持久化, 性能
 ```
 
 ### 追问 vs 换题
 
 ```typescript
-type LLMOutput =
-  | { action: 'follow_up'; intro: string }
-  | { action: 'next_question'; selected_id: string; intro: string }
+// AI thinking 中的 action 字段
+type Action =
+  | { action: 'follow_up' }                              // 针对当前回答追问，不消耗题库
+  | { action: 'next_question'; selected_id: string }     // 从候选题中选新题，记入 askedIds
 ```
 
-- `next_question`：`selected_id` 强制必填（编译器保证），记入 `askedIds`，消耗一个考察点
-- `follow_up`：无 `selected_id`，LLM 针对用户回答即兴生成追问，不走题库，考察深度
+- `next_question`：仅 skill 阶段使用，`selected_id` 记入 `session.askedIds`，下轮查库自动排除
+- `follow_up`：intro/project 阶段及无候选题时使用，LLM 即兴追问，考察深度
 
 **题库管"考察什么"，追问管"考察多深"，两件事分开。**
 
@@ -385,23 +377,25 @@ LLM 输出结构化思考 + 语音内容，前端分流展示：
 ```
 
 ```
-# LLM 输出格式（严格遵守）
+# LLM 输出格式（顺序固定：先 speech，再 thinking）
+<speech>
+请问跨库事务您是如何处理的？
+</speech>
 <thinking>
 {
   "action": "next_question",          // 或 "follow_up"
   "selected_id": "q_002",             // action=next_question 时必填
   "current_stage": "skill",           // 当前或即将进入的阶段
   "user_answer_analysis": "提到了X，遗漏了Y",
-  "next_focus": "考察Y的深度",
+  "next_focus": "分布式事务",          // 下轮查库的关键词
   "score_delta": 1,                   // -2 到 +2
   "covered_topics": ["分库分表"],
   "pending_topics": ["分布式事务", "缓存一致性"]
 }
 </thinking>
-<speech>
-请问跨库事务您是如何处理的？
-</speech>
 ```
+
+**speech 先于 thinking 输出**：前端在 `<speech>` 流式到来时即开始 TTS 预请求，无需等待 thinking 块，实现零等待开口。
 
 **价值：用户不只是练习，而是习得面试官思维。**
 
@@ -609,10 +603,10 @@ type ClientMessage =
   | {
       type: 'session_init'
       sessionId: string
-      candidateQuestions: CandidateQuestion[]
       totalMinutes?: number      // 面试总时长（默认 90）
       resumeText?: string        // 简历文本（可选）
       skipIntro?: boolean        // 跳过自我介绍（可选）
+      // 注：题库配置在服务端环境变量中，不经由客户端传递
     }
   | { type: 'user_turn'; sessionId: string; text: string }
   | { type: 'session_end'; sessionId: string }
@@ -637,10 +631,12 @@ client                          server
   │──session_init──────────────→│  创建 InterviewSession
   │←──session_ready─────────────│
   │                              │
-  │──user_turn──────────────────→│  streamInterviewResponse()
-  │←──thinking──────────────────│  applyThinking() 更新状态
+  │──user_turn──────────────────→│  skill 阶段：用 session.nextFocus 查 Supabase
+  │                              │  → 候选题注入 systemPrompt
+  │                              │  → streamInterviewResponse()
+  │←──thinking──────────────────│  applyThinking()：保存 nextFocus，更新状态
   │←──sentence (×N)─────────────│  TTS 逐句播放
-  │←──turn_end──────────────────│  携带 askedIds，前端刷新候选题
+  │←──turn_end──────────────────│  携带最新 askedIds
   │                              │
   │──session_end────────────────→│  generateReport()
   │←──report────────────────────│  前端跳转报告页
@@ -661,17 +657,20 @@ client                          server
 | 技能方向 | 多选，对应简历技术栈，AI 优先考察 |
 | 面试时长 | 30 / 45 / 60 / 90 分钟 |
 | 跳过自我介绍 | checkbox，直接进入项目/技能考察 |
-| 使用外部题库 | checkbox（默认关），关闭时由 LLM 完全自主出题；开启后显示题库 API 地址输入框 |
 | STT 引擎 | WebSpeech（Chrome）/ Whisper ONNX（跨浏览器） |
-| Azure TTS | API Key + Region（可选，不填降级到系统语音合成） |
+| TTS 引擎 | Murf API / Azure TTS / 系统语音（降级） |
+| Murf API Key | 填入后在浏览器直接调用 Murf，不经过后端 |
+| Azure TTS | API Key + Region（可选） |
 
 所有配置持久化到 `localStorage`（key: `ai-interview-settings`），下次进入自动恢复。
 
 ### 题库模式 vs LLM 自主出题
 
+题库开关在**服务端环境变量**控制（`QUESTION_SEARCH_URL`），前端无需配置：
+
 | 模式 | 触发条件 | skill 阶段行为 |
 |------|---------|--------------|
-| 题库模式 | `useQuestionBank=true` + 题库 API 可用 | 从候选题中选题，`action=next_question`，记入 `askedIds` |
-| LLM 自主 | `useQuestionBank=false`（默认） | LLM 根据简历和上下文自主设计问题，`action=follow_up` |
+| 题库模式 | `QUESTION_SEARCH_URL` 有值 | 每轮按 `next_focus` 语义查库，候选题注入 prompt，`action=next_question` |
+| LLM 自主 | `QUESTION_SEARCH_URL` 未设置（默认） | LLM 根据简历和上下文自主设计问题，`action=follow_up` |
 
-System Prompt 根据 `candidateQuestions` 是否为空自动切换指令文案，无需前端额外传参。
+System Prompt 根据候选题是否为空自动切换指令文案，LLM 无感知切换。

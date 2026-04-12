@@ -17,8 +17,6 @@ import { MurfTTSProvider } from '@/lib/tts/murfTTS'
 import { useInterviewWS } from '@/lib/ws/useInterviewWS'
 import { useInterviewTimer } from '@/lib/interview/useInterviewTimer'
 import { useVADFallback } from '@/lib/interview/useVADFallback'
-import { filterCandidates } from '@/lib/interview/filterCandidates'
-import { makeApi, type Question } from '@/lib/api'
 import { saveReport } from '@/lib/interview/reportStorage'
 import { StageIndicator } from '@/components/interview/StageIndicator'
 import type { STTProvider } from '@/lib/stt/STTProvider'
@@ -33,8 +31,7 @@ export default function InterviewPage() {
   const router = useRouter()
   const {
     sttEngine, ttsEngine, murfApiKey, azureTTSKey, azureTTSRegion,
-    targetCompanies, targetSkillTags, totalInterviewMinutes,
-    resumeText, skipIntro, useQuestionBank, questionBankUrl,
+    totalInterviewMinutes, resumeText, skipIntro,
   } = useSettingsStore()
 
   // ── Setup guard ───────────────────────────────────────────────────────────
@@ -66,18 +63,6 @@ export default function InterviewPage() {
 
   // ── Session init ──────────────────────────────────────────────────────────
   const [sessionId] = useState(() => crypto.randomUUID())
-  const allQuestionsRef = useRef<Question[]>([])
-  const [candidates, setCandidates] = useState<CandidateQuestion[]>([])
-
-  useEffect(() => {
-    if (!useQuestionBank) return  // LLM-only mode: no question bank
-    makeApi(questionBankUrl).listQuestions({ size: 100 })
-      .then(({ items }) => {
-        allQuestionsRef.current = items
-        setCandidates(filterCandidates(items, [], targetSkillTags, targetCompanies))
-      })
-      .catch(console.error)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const sttRef = useRef<STTProvider | null>(null)
@@ -171,7 +156,6 @@ export default function InterviewPage() {
   // ── WebSocket ─────────────────────────────────────────────────────────────
   const { sendUserTurn, sendSessionEnd, status: wsStatus } = useInterviewWS(
     sessionId,
-    candidates,
     {
       onThinking: (payload) => {
         setThinking(payload)
@@ -190,15 +174,13 @@ export default function InterviewPage() {
         ttsQueueRef.current?.push(text, hint)
         ttsQueueRef.current?.onIdle(() => setAiSpeaking(false))
       },
-      onTurnEnd: (askedIds) => {
+      onTurnEnd: (_askedIds) => {
         setLlmThinking(false)
         aiTurnSentenceIdxRef.current = 0
         // Commit AI turn to history
         const aiText = aiSentenceBufferRef.current.trim()
         if (aiText) setChatHistory((h) => [...h, { role: 'ai', text: aiText }])
         aiSentenceBufferRef.current = ''
-        // Refresh candidates
-        setCandidates(filterCandidates(allQuestionsRef.current, askedIds, targetSkillTags, targetCompanies))
         // Re-register onIdle so it fires when TTS finishes this turn's sentences.
         // If TTS is already idle (no sentences were pushed), fire immediately.
         if (ttsQueueRef.current?.isActive) {

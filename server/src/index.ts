@@ -46,7 +46,7 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'session_init') {
-      sessionStore.create(msg.sessionId, msg.candidateQuestions, msg.totalMinutes, msg.resumeText, msg.skipIntro)
+      sessionStore.create(msg.sessionId, msg.totalMinutes, msg.resumeText, msg.skipIntro)
       send(ws, { type: 'session_ready' })
       return
     }
