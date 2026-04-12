@@ -1,5 +1,6 @@
-import type { InterviewSession, ThinkingPayload, EvaluationReport } from './types'
+import type { InterviewSession, ThinkingPayload, EvaluationReport, CandidateQuestion } from './types'
 import { ProviderChain } from './llm/ProviderChain'
+import { queryQuestionsByFocus } from './supabaseQuery'
 
 const providerChain = new ProviderChain()
 
@@ -33,15 +34,13 @@ const STAGE_INSTRUCTIONS: Record<string, string> = {
 - 不再出新题，不再追问`,
 }
 
-function buildSystemPrompt(session: InterviewSession): string {
+function buildSystemPrompt(session: InterviewSession, candidates: CandidateQuestion[]): string {
   const elapsedMin = Math.floor((Date.now() - session.startedAt) / 60000)
   const remainingMin = Math.max(0, session.totalMinutes - elapsedMin)
   const stageElapsedMin = Math.floor((Date.now() - session.stageStartedAt) / 60000)
   const stageBudgetMin = STAGE_BUDGETS[session.currentStage]?.(session.totalMinutes) ?? 10
 
-  const candidatesText = session.candidateQuestions
-    .filter((q) => !session.askedIds.includes(q.id))
-    .slice(0, 8)
+  const candidatesText = candidates
     .map(
       (q, i) =>
         `${i + 1}. [ID:${q.id}] ${q.content}\n   公司：${q.companies.join('、')} | 难度：${q.difficulty} | 标签：${q.tags.join(', ')}`
@@ -52,13 +51,19 @@ function buildSystemPrompt(session: InterviewSession): string {
     ? `\n## 候选人简历\n${session.resumeText}\n`
     : ''
 
-  const hasQuestionBank = session.candidateQuestions.length > 0
-  const skillSourceInstruction = hasQuestionBank
+  const hasQuestionBank = !!process.env.QUESTION_SEARCH_URL
+  const skillSourceInstruction = candidates.length > 0
     ? '从候选题目中选题，由浅入深考察技术深度；action 使用 next_question 并填写 selected_id'
-    : '无题库，请根据候选人简历和已覆盖话题自主设计技术问题，由浅入深；action 使用 follow_up（selected_id 留空）'
+    : hasQuestionBank
+      ? '题库暂无匹配题目，请根据候选人简历和已覆盖话题自主设计技术问题；action 使用 follow_up（selected_id 留空）'
+      : '无题库，请根据候选人简历和已覆盖话题自主设计技术问题，由浅入深；action 使用 follow_up（selected_id 留空）'
 
   const stageInstruction = (STAGE_INSTRUCTIONS[session.currentStage] ?? '')
     .replace('{SKILL_SOURCE_INSTRUCTION}', skillSourceInstruction)
+
+  const candidatesSection = candidatesText
+    ? `## 候选题目（与当前考察方向相关，skill 阶段优先使用）\n${candidatesText}`
+    : ''
 
   return `你是一位资深技术面试官，正在对候选人进行 Java 后端技术面试。
 
@@ -74,8 +79,7 @@ ${resumeSection}
 ## 当前阶段指令
 ${stageInstruction}
 
-## 候选题目（按频率排序，技能考察阶段使用）
-${candidatesText || (hasQuestionBank ? '（候选题目已用完，请即兴出题或进行追问）' : '（未启用题库，请根据简历和对话上下文自主出题）')}
+${candidatesSection}
 
 ## 输出格式（严格遵守）
 每次回复必须包含两个部分，**顺序固定：先 speech，再 thinking**：
@@ -133,10 +137,14 @@ export async function* streamInterviewResponse(
   session: InterviewSession,
   userText: string
 ): AsyncGenerator<LLMEvent> {
-  const systemPrompt = buildSystemPrompt(session)
+  // Query external question bank for candidates relevant to next_focus (skill stage only)
+  let candidates: CandidateQuestion[] = []
+  if (session.currentStage === 'skill' && process.env.QUESTION_SEARCH_URL) {
+    const focus = session.nextFocus || session.pendingTopics[0] || ''
+    candidates = await queryQuestionsByFocus(focus, session.askedIds, 5)
+  }
 
-  // New output order: <speech> first, then <thinking>
-  // This means the very first tokens are speech content → zero thinking-block wait.
+  const systemPrompt = buildSystemPrompt(session, candidates)
 
   let buffer = ''
   let inSpeech = false
@@ -247,8 +255,6 @@ export async function generateReport(session: InterviewSession): Promise<Evaluat
   "duration_min": ${durationMin}
 }`
 
-  // Use streaming to collect the full report — avoids non-streaming timeout issues.
-  // Stream the response and accumulate all chunks, with a generous 60s overall timeout.
   const REPORT_TIMEOUT = 60_000
   let raw: string
   try {
