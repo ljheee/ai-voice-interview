@@ -243,12 +243,11 @@ AI 从中选题 或 自主追问
 
 ### 题库开关
 
-通过服务端环境变量控制，前端无感知，Key 不暴露到客户端：
+通过服务端环境变量控制，前端无感知：
 
 ```env
-ENABLE_QUESTION_BANK=true          # 开关
-SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_ANON_KEY=your_key
+# 有值则开启，unset 或空值则关闭（无需额外 flag）
+QUESTION_SEARCH_URL=https://interview-crawler-production.up.railway.app/api/questions/search
 ```
 
 关闭时 LLM 完全自主出题，开启时仅在 `skill` 阶段查库（intro/project/closing 阶段不出技术题，查了也无用）。
@@ -667,11 +666,11 @@ client                          server
 
 ### 题库模式 vs LLM 自主出题
 
-题库开关在**服务端环境变量**控制（`ENABLE_QUESTION_BANK`），前端无需配置：
+题库开关在**服务端环境变量**控制（`QUESTION_SEARCH_URL`），前端无需配置：
 
 | 模式 | 触发条件 | skill 阶段行为 |
 |------|---------|--------------|
-| 题库模式 | `ENABLE_QUESTION_BANK=true` + Supabase 可用 | 每轮按 `next_focus` 动态查库，候选题注入 prompt，`action=next_question` |
-| LLM 自主 | `ENABLE_QUESTION_BANK=false`（默认） | LLM 根据简历和上下文自主设计问题，`action=follow_up` |
+| 题库模式 | `QUESTION_SEARCH_URL` 有值 | 每轮按 `next_focus` 语义查库，候选题注入 prompt，`action=next_question` |
+| LLM 自主 | `QUESTION_SEARCH_URL` 未设置（默认） | LLM 根据简历和上下文自主设计问题，`action=follow_up` |
 
 System Prompt 根据候选题是否为空自动切换指令文案，LLM 无感知切换。
