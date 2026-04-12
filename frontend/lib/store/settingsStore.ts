@@ -18,24 +18,18 @@ interface SettingsState {
   setAzureTTS: (key: string, region: string) => void
   setTTSEngine: (engine: TTSEngine) => void
 
-  // Interview profile (set on setup page, used by filterCandidates)
-  targetCompanies: string[]    // e.g. ["字节", "阿里"]
-  targetSkillTags: string[]    // e.g. ["Redis", "分布式"]
+  // Interview profile
+  targetCompanies: string[]
+  targetSkillTags: string[]
   totalInterviewMinutes: number
   resumeText: string
   skipIntro: boolean
-  useQuestionBank: boolean     // whether to fetch from Supabase question bank
-  supabaseUrl: string          // Supabase project URL
-  supabaseAnonKey: string      // Supabase anon/role key
   setInterviewProfile: (
     companies: string[],
     skillTags: string[],
     totalMinutes: number,
     resumeText: string,
     skipIntro: boolean,
-    useQuestionBank: boolean,
-    supabaseUrl: string,
-    supabaseAnonKey: string,
   ) => void
 }
 
@@ -57,11 +51,8 @@ export const useSettingsStore = create<SettingsState>()(
       totalInterviewMinutes: 90,
       resumeText: '',
       skipIntro: false,
-      useQuestionBank: false,
-      supabaseUrl: '',
-      supabaseAnonKey: '',
-      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro, useQuestionBank, supabaseUrl, supabaseAnonKey) =>
-        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro, useQuestionBank, supabaseUrl, supabaseAnonKey }),
+      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro) =>
+        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro }),
     }),
     { name: 'ai-interview-settings' }
   )

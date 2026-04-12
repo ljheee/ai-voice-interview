@@ -86,7 +86,7 @@ export default function SetupPage() {
   }
 
   function handleStart() {
-    setInterviewProfile(companies, skills, duration, resumeText, skipIntro, false, '', '')
+    setInterviewProfile(companies, skills, duration, resumeText, skipIntro)
     router.push('/interview')
   }
 

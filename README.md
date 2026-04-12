@@ -31,10 +31,8 @@ cp server/.env.example server/.env
 # LLM — OpenAI 兼容协议，支持多 provider 顺序降级
 LLM_PROVIDERS=[{"name":"kimi","baseUrl":"https://api.moonshot.cn/v1","apiKey":"sk-xxx","model":"moonshot-v1-32k"}]
 
-# 题库（可选）— 直连 Supabase，仅在 skill 阶段按 next_focus 动态查询
-ENABLE_QUESTION_BANK=false
-SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_ANON_KEY=your_supabase_anon_or_service_role_key
+# 题库（可选）— 有值则开启，skill 阶段按 next_focus 语义查询
+# QUESTION_SEARCH_URL=https://interview-crawler-production.up.railway.app/api/questions/search
 
 PORT=3001
 ```
@@ -95,7 +93,7 @@ cd frontend && npm run dev
 | VAD | @ricky0123/vad-react（Silero VAD） |
 | 传输 | WebSocket（ws） |
 | LLM | 配置驱动多 Provider（OpenAI 兼容协议） |
-| 题库 | Supabase 直连（服务端，可选） |
+| 题库 | HTTP API（服务端，可选，支持语义搜索） |
 | 后端 | Node.js + Express |
 
 ---
