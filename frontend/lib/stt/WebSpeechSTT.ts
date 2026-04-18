@@ -2,7 +2,7 @@
 
 import type { STTProvider } from './STTProvider'
 
-type STTEvent = 'interim' | 'final' | 'thinking'
+type STTEvent = 'interim' | 'final' | 'thinking' | 'error'
 
 // Web Speech API types not fully in standard TS DOM lib
 interface ISpeechRecognitionResult {
@@ -51,6 +51,7 @@ export class WebSpeechSTT implements STTProvider {
     ['interim', new Set<(text: string) => void>()],
     ['final', new Set<(text: string) => void>()],
     ['thinking', new Set<(text: string) => void>()],
+    ['error', new Set<(text: string) => void>()],
   ])
 
   // Accumulates interim text during a single start/stop session
@@ -112,6 +113,7 @@ export class WebSpeechSTT implements STTProvider {
       // 'no-speech' and 'aborted' are expected — not real errors
       if (event.error !== 'no-speech' && event.error !== 'aborted') {
         console.error('WebSpeechSTT error:', event.error)
+        this.emit('error', event.error)
       }
     }
 

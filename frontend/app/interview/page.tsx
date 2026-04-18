@@ -105,6 +105,10 @@ export default function InterviewPage() {
       sttEngine === 'webspeech' ? new WebSpeechSTT() : new WhisperONNXSTT()
 
     provider.on('interim', setInterimText)
+    provider.on('error', (errCode) => {
+      const msg = errCode === 'network' ? '语音识别网络异常，请检查网络后重试' : `语音识别错误：${errCode}`
+      setWsError(msg)
+    })
     provider.on('thinking', () => {
       // Whisper worker is still inferring — extend the safety timeout to 15s
       // so "识别中" stays visible while the ONNX model runs inference

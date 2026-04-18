@@ -8,7 +8,7 @@ export interface STTProvider {
   /** Stop recording/recognition */
   stop(): void
   /** Register event handler */
-  on(event: 'interim' | 'final' | 'thinking', handler: (text: string) => void): void
+  on(event: 'interim' | 'final' | 'thinking' | 'error', handler: (text: string) => void): void
   /** Unregister event handler */
-  off(event: 'interim' | 'final' | 'thinking', handler: (text: string) => void): void
+  off(event: 'interim' | 'final' | 'thinking' | 'error', handler: (text: string) => void): void
 }
