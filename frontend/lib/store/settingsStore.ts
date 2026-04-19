@@ -26,12 +26,16 @@ interface SettingsState {
   totalInterviewMinutes: number
   resumeText: string
   skipIntro: boolean
+  useQuestionBank: boolean
+  questionBankUrl: string
   setInterviewProfile: (
     companies: string[],
     skillTags: string[],
     totalMinutes: number,
     resumeText: string,
     skipIntro: boolean,
+    useQuestionBank?: boolean,
+    questionBankUrl?: string,
   ) => void
 }
 
@@ -55,8 +59,10 @@ export const useSettingsStore = create<SettingsState>()(
       totalInterviewMinutes: 90,
       resumeText: '',
       skipIntro: false,
-      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro) =>
-        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro }),
+      useQuestionBank: false,
+      questionBankUrl: 'http://localhost:8000',
+      setInterviewProfile: (companies, skillTags, totalMinutes, resumeText, skipIntro, useQuestionBank, questionBankUrl) =>
+        set({ targetCompanies: companies, targetSkillTags: skillTags, totalInterviewMinutes: totalMinutes, resumeText, skipIntro, useQuestionBank: useQuestionBank ?? false, questionBankUrl: questionBankUrl ?? 'http://localhost:8000' }),
     }),
     { name: 'ai-interview-settings' }
   )

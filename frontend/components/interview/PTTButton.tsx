@@ -64,13 +64,13 @@ export function PTTButton({ onPressStart, onPressEnd, disabled = false, countdow
     const onMouseUp = () => handleEndRef.current()
     const onTouchEnd = () => handleEndRef.current()
 
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('keydown', onKeyDown, { capture: true })
+    window.addEventListener('keyup', onKeyUp, { capture: true })
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('touchend', onTouchEnd)
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('keydown', onKeyDown, { capture: true })
+      window.removeEventListener('keyup', onKeyUp, { capture: true })
       window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('touchend', onTouchEnd)
     }

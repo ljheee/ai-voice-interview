@@ -299,6 +299,20 @@ export default function InterviewPage() {
     },
   })
 
+  // ── Prevent space key scroll ──────────────────────────────────────────────
+  useEffect(() => {
+    const preventScroll = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        const tag = (e.target as HTMLElement)?.tagName
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+          e.preventDefault()
+        }
+      }
+    }
+    document.addEventListener('keydown', preventScroll)
+    return () => document.removeEventListener('keydown', preventScroll)
+  }, [])
+
   // ── End interview ─────────────────────────────────────────────────────────
   const handleEndInterview = useCallback(() => {
     if (ending) return

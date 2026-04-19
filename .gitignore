@@ -53,3 +53,5 @@ server/public/models/
 # Generic model/binary patterns
 *.onnx
 *.node
+
+.claude
