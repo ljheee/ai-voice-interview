@@ -11,6 +11,7 @@ import { STTSelector } from '@/components/settings/STTSelector'
 import { useSettingsStore } from '@/lib/store/settingsStore'
 import { WebSpeechSTT } from '@/lib/stt/WebSpeechSTT'
 import { WhisperONNXSTT } from '@/lib/stt/WhisperONNXSTT'
+import { DoubaoSTT } from '@/lib/stt/DoubaoSTT'
 import { TTSQueue } from '@/lib/tts/TTSQueue'
 import { AzureTTSProvider } from '@/lib/tts/azureTTS'
 import { MurfTTSProvider } from '@/lib/tts/murfTTS'
@@ -30,8 +31,9 @@ interface ChatEntry {
 export default function InterviewPage() {
   const router = useRouter()
   const {
-    sttEngine, ttsEngine, murfApiKey, azureTTSKey, azureTTSRegion,
-    totalInterviewMinutes, resumeText, skipIntro,
+    sttEngine, doubaoCookie, ttsEngine, murfApiKey, azureTTSKey, azureTTSRegion,
+    targetCompanies, targetSkillTags, totalInterviewMinutes,
+    resumeText, skipIntro, useQuestionBank, questionBankUrl,
   } = useSettingsStore()
 
   // ── Setup guard ───────────────────────────────────────────────────────────
@@ -102,7 +104,9 @@ export default function InterviewPage() {
     sttRef.current = null
 
     const provider: STTProvider =
-      sttEngine === 'webspeech' ? new WebSpeechSTT() : new WhisperONNXSTT()
+      sttEngine === 'webspeech' ? new WebSpeechSTT() :
+      sttEngine === 'doubao' ? new DoubaoSTT(doubaoCookie) :
+      new WhisperONNXSTT()
 
     provider.on('interim', setInterimText)
     provider.on('error', (errCode) => {

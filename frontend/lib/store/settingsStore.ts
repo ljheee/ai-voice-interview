@@ -3,13 +3,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type STTEngine = 'webspeech' | 'whisper'
+export type STTEngine = 'webspeech' | 'whisper' | 'doubao'
 export type TTSEngine = 'murf' | 'azure' | 'system'
 
 interface SettingsState {
   // Voice
   sttEngine: STTEngine
   setSttEngine: (engine: STTEngine) => void
+  doubaoCookie: string
+  setDoubaoCookie: (cookie: string) => void
   ttsEngine: TTSEngine
   murfApiKey: string
   setMurfApiKey: (key: string) => void
@@ -38,6 +40,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       sttEngine: 'webspeech',
       setSttEngine: (engine) => set({ sttEngine: engine }),
+      doubaoCookie: '',
+      setDoubaoCookie: (cookie) => set({ doubaoCookie: cookie }),
       ttsEngine: 'murf',
       setTTSEngine: (engine) => set({ ttsEngine: engine }),
       murfApiKey: '',

@@ -5,6 +5,7 @@ import cors from 'cors'
 import { WebSocketServer, WebSocket } from 'ws'
 import { sessionStore } from './sessionStore'
 import { streamInterviewResponse, generateReport } from './llm'
+import { attachDoubaoProxy } from './doubao-proxy'
 import type { ClientMessage, ServerMessage } from './types'
 
 const app = express()
@@ -27,7 +28,19 @@ app.get('/health', (_req, res) => {
 // ─── HTTP server + WebSocket server ──────────────────────────────────────────
 
 const httpServer = createServer(app)
-const wss = new WebSocketServer({ server: httpServer, path: '/ws/interview' })
+const wss = new WebSocketServer({ noServer: true })
+const doubaoWss = attachDoubaoProxy()
+
+httpServer.on('upgrade', (req, socket, head) => {
+  const path = req.url?.split('?')[0]
+  if (path === '/ws/interview') {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
+  } else if (path === '/asr/doubao') {
+    doubaoWss.handleUpgrade(req, socket, head, (ws) => doubaoWss.emit('connection', ws, req))
+  } else {
+    socket.destroy()
+  }
+})
 
 function send(ws: WebSocket, msg: ServerMessage) {
   if (ws.readyState === WebSocket.OPEN) {
