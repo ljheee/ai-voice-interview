@@ -24,6 +24,7 @@ export class DoubaoSTT implements STTProvider {
   private handleError: (() => void) | null = null
   private handleClose: (() => void) | null = null
   private handleOpen: (() => void) | null = null
+  private stopTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor(cookie: string, serverUrl = 'ws://localhost:3001') {
     this.cookie = cookie
@@ -43,7 +44,16 @@ export class DoubaoSTT implements STTProvider {
   }
 
   start() {
-    if (this.ws) return
+    // 如果已有连接且处于打开状态，直接返回
+    if (this.ws?.readyState === WebSocket.OPEN) return
+    // 如果有旧连接（可能已关闭），先清理
+    if (this.ws) {
+      this.cleanup()
+    }
+    if (!this.cookie) {
+      this.emit('error', '未配置豆包 Cookie，请在设置中填写')
+      return
+    }
     this.lastText = ''
 
     const ws = new WebSocket(this.wsUrl)
@@ -95,6 +105,11 @@ export class DoubaoSTT implements STTProvider {
       }
 
       if (msg.event === 'finish') {
+        // 清理 stop() 中的备用定时器
+        if (this.stopTimeout) {
+          clearTimeout(this.stopTimeout)
+          this.stopTimeout = null
+        }
         this.emit('final', this.lastText)
         this.lastText = ''
         if (this.ws?.readyState === WebSocket.OPEN) this.ws.close(1000)
@@ -117,6 +132,8 @@ export class DoubaoSTT implements STTProvider {
 
   stop() {
     if (!this.ws) return
+    // 如果已经在停止过程中（有备用定时器），不要重复处理
+    if (this.stopTimeout) return
     // Stop mic to flush remaining audio, but keep WS open until doubao sends 'finish'
     if (this.processor) { this.processor.disconnect(); this.processor = null }
     if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null }
@@ -124,9 +141,11 @@ export class DoubaoSTT implements STTProvider {
     // Doubao sends 'finish' after detecting end-of-speech; close WS then
     // Fallback: force-close after 3s if finish never arrives
     const ws = this.ws
-    setTimeout(() => {
+    const textToEmit = this.lastText
+    this.stopTimeout = setTimeout(() => {
+      this.stopTimeout = null
       if (ws.readyState === WebSocket.OPEN) {
-        if (this.lastText) this.emit('final', this.lastText)
+        if (textToEmit) this.emit('final', textToEmit)
         ws.close(1000)
       }
     }, 3000)
@@ -144,6 +163,10 @@ export class DoubaoSTT implements STTProvider {
     this.handleMessage = null
     this.handleError = null
     this.handleClose = null
+    if (this.stopTimeout) {
+      clearTimeout(this.stopTimeout)
+      this.stopTimeout = null
+    }
 
     if (this.processor) { this.processor.disconnect(); this.processor = null }
     if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null }

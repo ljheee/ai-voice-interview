@@ -303,14 +303,17 @@ export default function InterviewPage() {
   useEffect(() => {
     const preventScroll = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
-        const tag = (e.target as HTMLElement)?.tagName
-        if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+        const target = e.target as HTMLElement
+        const tag = target?.tagName
+        const isEditable = target?.isContentEditable
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA' && !isEditable) {
           e.preventDefault()
         }
       }
     }
-    document.addEventListener('keydown', preventScroll)
-    return () => document.removeEventListener('keydown', preventScroll)
+    // 使用捕获阶段确保在事件到达目标前处理
+    document.addEventListener('keydown', preventScroll, { capture: true })
+    return () => document.removeEventListener('keydown', preventScroll, { capture: true })
   }, [])
 
   // ── End interview ─────────────────────────────────────────────────────────

@@ -9,13 +9,17 @@ const DOUBAO_WS_URL =
   '&region=&sys_region=&samantha_web=1&use-olympus-account=1' +
   '&format=pcm'
 
+const MAX_PENDING_SIZE = 50 // 最多缓存50个chunk，防止内存泄漏
+const CONNECT_TIMEOUT = 10000 // 10秒连接超时
+
 export function attachDoubaoProxy(): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true })
 
   wss.on('connection', (clientWs: WebSocket) => {
     let doubaoWs: WebSocket | null = null
-    const pending: (Buffer | ArrayBuffer | Buffer[])[] = []
+    const pending: Buffer[] = []
     let authed = false
+    let connectTimeout: NodeJS.Timeout | null = null
 
     clientWs.on('message', (data, isBinary) => {
       // First message must be the auth control message carrying the cookie
@@ -27,7 +31,6 @@ export function attachDoubaoProxy(): WebSocketServer {
             return
           }
           authed = true
-          console.log('[doubao-proxy] cookie length:', msg.cookie?.length, 'preview:', msg.cookie?.slice(0, 80))
           doubaoWs = new WebSocket(DOUBAO_WS_URL, {
             headers: {
               Cookie: msg.cookie,
@@ -37,7 +40,23 @@ export function attachDoubaoProxy(): WebSocketServer {
           })
           doubaoWs.binaryType = 'nodebuffer'
 
+          // 连接超时处理
+          connectTimeout = setTimeout(() => {
+            console.error('[doubao-proxy] connection timeout')
+            if (clientWs.readyState === WebSocket.OPEN) {
+              clientWs.send(JSON.stringify({ event: 'error', message: 'Connection timeout' }))
+              clientWs.close(4003, 'Connection timeout')
+            }
+            if (doubaoWs?.readyState === WebSocket.CONNECTING) {
+              doubaoWs.terminate()
+            }
+          }, CONNECT_TIMEOUT)
+
           doubaoWs.on('open', () => {
+            if (connectTimeout) {
+              clearTimeout(connectTimeout)
+              connectTimeout = null
+            }
             clientWs.send(JSON.stringify({ event: 'open' }))
             // Flush any PCM that arrived before doubao WS was ready
             for (const chunk of pending) doubaoWs!.send(chunk)
@@ -46,7 +65,6 @@ export function attachDoubaoProxy(): WebSocketServer {
 
           doubaoWs.on('message', (upstream) => {
             const text = upstream.toString()
-            console.log('[doubao-proxy] upstream msg:', text.slice(0, 200))
             if (clientWs.readyState === WebSocket.OPEN) clientWs.send(text)
           })
 
@@ -71,12 +89,20 @@ export function attachDoubaoProxy(): WebSocketServer {
       if (!isBinary) return
       if (doubaoWs?.readyState === WebSocket.OPEN) {
         doubaoWs.send(data)
+      } else if (pending.length < MAX_PENDING_SIZE) {
+        pending.push(data as Buffer)
       } else {
+        // pending 已满，丢弃最旧的数据
+        pending.shift()
         pending.push(data as Buffer)
       }
     })
 
     clientWs.on('close', () => {
+      if (connectTimeout) {
+        clearTimeout(connectTimeout)
+        connectTimeout = null
+      }
       if (doubaoWs?.readyState === WebSocket.OPEN) doubaoWs.close(1000)
     })
 
