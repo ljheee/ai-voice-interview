@@ -9,6 +9,9 @@ export function STTSelector() {
   const [webSpeechSupported, setWebSpeechSupported] = useState(true)
   const [cookieInput, setCookieInput] = useState(doubaoCookie)
 
+  // 从 localStorage 恢复后，同步到输入框
+  useEffect(() => { setCookieInput(doubaoCookie) }, [doubaoCookie])
+
   useEffect(() => { setWebSpeechSupported(WebSpeechSTT.isSupported()) }, [])
 
   const options: { value: STTEngine; label: string; desc: string; available: boolean }[] = [
@@ -69,12 +72,9 @@ export function STTSelector() {
 
       {sttEngine === 'doubao' && (
         <div className="mt-3 space-y-1">
-          <p className="text-xs text-gray-600">
-            豆包 Cookie —— 打开 <span className="font-mono">doubao.com</span>，F12 → Application → Cookies，复制全部 Cookie 值粘贴到此处
-          </p>
           <textarea
             className="w-full text-xs font-mono border border-gray-300 rounded-md p-2 h-20 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
-            placeholder="sessionid_ss=...; 其他 cookie..."
+            placeholder={`sessionid_ss=xxx...\n打开 doubao.com，F12 → Application → Cookies → sessionid_ss，复制值粘贴到这`}
             value={cookieInput}
             onChange={(e) => setCookieInput(e.target.value)}
             onBlur={() => setDoubaoCookie(cookieInput)}

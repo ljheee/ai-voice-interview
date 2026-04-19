@@ -1,9 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSettingsStore } from '@/lib/store/settingsStore'
 import { STTSelector } from '@/components/settings/STTSelector'
+
+// PDF.js 全局变量类型
+declare global {
+  interface Window {
+    pdfjsLib?: any
+  }
+}
 
 const COMPANY_OPTIONS = ['字节跳动', '阿里巴巴', '腾讯', '美团', '京东', '百度', '滴滴', '快手', '拼多多', '华为']
 const SKILL_OPTIONS = [
@@ -28,6 +35,34 @@ export default function SetupPage() {
   const [skipIntro, setSkipIntro] = useState(storedSkipIntro)
   const [fileError, setFileError] = useState('')
   const [fileLoading, setFileLoading] = useState(false)
+  const [pdfJsLoaded, setPdfJsLoaded] = useState(false)
+
+  // 动态加载 PDF.js CDN
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (window.pdfjsLib) {
+      setPdfJsLoaded(true)
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'
+    script.async = true
+    script.onload = () => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+        setPdfJsLoaded(true)
+      }
+    }
+    script.onerror = () => {
+      console.error('[PDF] Failed to load CDN')
+    }
+    document.body.appendChild(script)
+
+    return () => {
+      // 不移除 script，避免重复加载
+    }
+  }, [])
 
   function toggle<T>(arr: T[], item: T): T[] {
     return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]
@@ -43,25 +78,50 @@ export default function SetupPage() {
       if (file.name.endsWith('.txt')) {
         text = await file.text()
       } else if (file.name.endsWith('.pdf')) {
-        // Use legacy build which supports disableWorker option.
-        // This avoids all worker path issues in Next.js webpack bundling.
-        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-        pdfjsLib.GlobalWorkerOptions.workerSrc = ''  // disable worker, run in main thread
-        const arrayBuffer = await file.arrayBuffer()
-        const pdf = await pdfjsLib.getDocument({
-          data: arrayBuffer,
-          useWorkerFetch: false,
-          isEvalSupported: false,
-          useSystemFonts: true,
-        }).promise
-        const pages = await Promise.all(
-          Array.from({ length: pdf.numPages }, (_, i) =>
-            pdf.getPage(i + 1)
-              .then((p) => p.getTextContent())
-              .then((c) => c.items.map((it: { str?: string }) => it.str ?? '').join(' '))
-          )
-        )
-        text = pages.join('\n')
+        if (!pdfJsLoaded || !window.pdfjsLib) {
+          setFileError('PDF 加载中，请稍后再试或粘贴文本')
+          return
+        }
+
+        try {
+          const pdfjsLib = window.pdfjsLib
+          const arrayBuffer = await file.arrayBuffer()
+          console.log('[PDF] File size:', arrayBuffer.byteLength, 'bytes')
+
+          const loadingTask = pdfjsLib.getDocument({
+            data: arrayBuffer,
+            useSystemFonts: true,
+          })
+
+          const pdf = await loadingTask.promise
+          console.log('[PDF] Pages:', pdf.numPages)
+
+          const pages: string[] = []
+          for (let i = 1; i <= pdf.numPages; i++) {
+            try {
+              const page = await pdf.getPage(i)
+              const content = await page.getTextContent()
+              const pageText = content.items
+                .map((item: any) => item.str ?? item.text ?? '')
+                .join(' ')
+              pages.push(pageText)
+              console.log(`[PDF] Page ${i} text length:`, pageText.length)
+            } catch (pageErr) {
+              console.error(`[PDF] Page ${i} error:`, pageErr)
+              pages.push('')
+            }
+          }
+          text = pages.join('\n').trim()
+
+          if (!text) {
+            setFileError('PDF 无法提取文本（可能是扫描件或图片 PDF），请粘贴文本')
+            return
+          }
+        } catch (pdfErr: any) {
+          console.error('[PDF] Parse error:', pdfErr)
+          setFileError(`PDF 解析失败: ${pdfErr?.message || '未知错误'}，请尝试粘贴文本`)
+          return
+        }
       } else if (file.name.endsWith('.docx')) {
         const mammoth = await import('mammoth')
         const arrayBuffer = await file.arrayBuffer()
@@ -76,11 +136,11 @@ export default function SetupPage() {
         setFileError('简历文本过长，建议保留关键项目经历（< 5000 字）')
       }
       setResumeText(trimmed)
-    } catch {
+    } catch (err) {
+      console.error('[Upload] Error:', err)
       setFileError('文件解析失败，请尝试粘贴文本')
     } finally {
       setFileLoading(false)
-      // Reset input so same file can be re-uploaded
       e.target.value = ''
     }
   }
@@ -118,6 +178,7 @@ export default function SetupPage() {
                 onChange={handleFileUpload}
               />
             </label>
+            {!pdfJsLoaded && <span className="text-xs text-gray-400">PDF 加载中…</span>}
             {fileLoading && <span className="text-xs text-gray-400">解析中…</span>}
             {fileError && <span className="text-xs text-red-500">{fileError}</span>}
             {!fileLoading && !fileError && resumeText && (
