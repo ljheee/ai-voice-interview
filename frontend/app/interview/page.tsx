@@ -49,6 +49,7 @@ export default function InterviewPage() {
   // ── UI state ──────────────────────────────────────────────────────────────
   const [interimText, setInterimText] = useState('')
   const [finalText, setFinalText] = useState('')
+  const [aiText, setAiText] = useState('')
   const [aiSpeaking, setAiSpeaking] = useState(false)
   const [llmThinking, setLlmThinking] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -175,6 +176,7 @@ export default function InterviewPage() {
       onSentence: (text) => {
         setLlmThinking(false)
         setAiSpeaking(true)
+        setAiText((prev) => prev + text)
         aiSentenceBufferRef.current += text
 
         const idx = aiTurnSentenceIdxRef.current
@@ -247,6 +249,7 @@ export default function InterviewPage() {
     startTurn()
     setInterimText('')
     setFinalText('')
+    setAiText('')
     setWsError(null)  // clear any previous LLM error on retry
     vadStatusRef.current = 'recording'
     setVadStatus('recording')
@@ -447,7 +450,7 @@ export default function InterviewPage() {
 
         {/* Subtitle box — fixed height, text scrolls inside */}
         <div className="w-full max-w-lg bg-white rounded-xl shadow-sm border border-gray-100 p-4 shrink-0 mb-8">
-          <Subtitle interim={interimText} final={finalText} />
+          <Subtitle interim={interimText} final={finalText} aiText={aiText} />
         </div>
 
         {/* PTT button — always at same vertical position */}
