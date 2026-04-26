@@ -47,6 +47,9 @@ frontend/public/ort-wasm-*.mjs
 frontend/public/silero_vad.onnx
 frontend/public/vad.worklet.bundle.min.js
 
+# PDF.js worker (copied from node_modules at build time)
+frontend/public/pdf.worker.min.mjs
+
 # Whisper model files (downloaded by server on first run)
 server/public/models/
 

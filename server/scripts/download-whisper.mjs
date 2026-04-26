@@ -11,7 +11,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const BASE_URL = 'https://hf-mirror.com/Xenova/whisper-small/resolve/main'
+const BASE_URL = process.env.HF_MIRROR_URL || 'https://huggingface.co/Xenova/whisper-small/resolve/main'
 const OUT_DIR = path.join(__dirname, '..', 'public', 'models', 'Xenova', 'whisper-small')
 
 const FILES = [

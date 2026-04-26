@@ -12,7 +12,7 @@ ai-voice-interview/
 
 ## 环境要求
 
-- Node.js 18+
+- Node.js 20.6+（服务端 `npm run dev` 使用 `--env-file`，需 20.6 起支持）
 - npm 9+
 
 ---
@@ -21,11 +21,7 @@ ai-voice-interview/
 
 ### server/.env
 
-```bash
-cp server/.env.example server/.env
-```
-
-编辑 `server/.env`：
+首次运行 `npm run dev` 时会自动从 `.env.example` 创建 `.env`，你只需编辑它：
 
 ```env
 # LLM — OpenAI 兼容协议，支持多 provider 顺序降级
@@ -46,6 +42,10 @@ cp frontend/.env.local.example frontend/.env.local
 ```env
 NEXT_PUBLIC_WS_URL=ws://localhost:3001/ws/interview
 NEXT_PUBLIC_MODEL_SERVER=http://localhost:3001   # Whisper 模型文件托管地址
+
+# 题库搜索 API（可选）— 前端直接调用，用于 /search、/category、/question 页面
+# 留空或保持默认值时，这些页面会请求 localhost:8000（需自行启动题库服务）
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 ---
@@ -53,9 +53,25 @@ NEXT_PUBLIC_MODEL_SERVER=http://localhost:3001   # Whisper 模型文件托管地
 ## 安装依赖
 
 ```bash
-cd frontend && npm install --ignore-scripts
-bash ../scripts/setup.sh    # 拷贝 ONNX/VAD/PDF.js 等大二进制到 public/
+cd frontend && npm install   # postinstall 自动拷贝 ONNX/VAD/PDF.js 到 public/
 cd ../server && npm install
+```
+
+> 如果网络受限，`frontend/npm install` 可带 `--ignore-scripts`，随后手动执行 `bash scripts/setup.sh`。
+
+### 离线使用 Whisper（可选）
+
+默认 STT 引擎为 `webspeech`（Chrome 内置，无需模型）。如需使用本地 ONNX Whisper，模型会在**首次使用时自动从 Hugging Face 下载**并缓存到浏览器。若处于无网/内网环境，可预先下载：
+
+```bash
+cd server && node scripts/download-whisper.mjs
+```
+
+国内网络可换镜像：
+
+```bash
+HF_MIRROR_URL=https://hf-mirror.com/Xenova/whisper-small/resolve/main \
+  node scripts/download-whisper.mjs
 ```
 
 ---

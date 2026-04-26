@@ -22,7 +22,7 @@ let asr: TranscribePipeline | null = null
 
 async function loadModel(modelServerOrigin: string) {
   env.allowLocalModels = true
-  env.allowRemoteModels = false
+  env.allowRemoteModels = true
   env.localModelPath = `${modelServerOrigin}/models/`
   env.useBrowserCache = true
 
