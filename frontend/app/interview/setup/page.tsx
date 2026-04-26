@@ -1,16 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSettingsStore } from '@/lib/store/settingsStore'
 import { STTSelector } from '@/components/settings/STTSelector'
-
-// PDF.js 全局变量类型
-declare global {
-  interface Window {
-    pdfjsLib?: any
-  }
-}
 
 const COMPANY_OPTIONS = ['字节跳动', '阿里巴巴', '腾讯', '美团', '京东', '百度', '滴滴', '快手', '拼多多', '华为']
 const SKILL_OPTIONS = [
@@ -26,6 +19,7 @@ export default function SetupPage() {
     resumeText: storedResumeText, skipIntro: storedSkipIntro,
     setInterviewProfile, ttsEngine, setTTSEngine,
     murfApiKey, setMurfApiKey, azureTTSKey, azureTTSRegion, setAzureTTS,
+    doubaoCookie, setDoubaoCookie,
   } = useSettingsStore()
 
   const [companies, setCompanies] = useState<string[]>(targetCompanies)
@@ -35,34 +29,6 @@ export default function SetupPage() {
   const [skipIntro, setSkipIntro] = useState(storedSkipIntro)
   const [fileError, setFileError] = useState('')
   const [fileLoading, setFileLoading] = useState(false)
-  const [pdfJsLoaded, setPdfJsLoaded] = useState(false)
-
-  // 动态加载 PDF.js CDN
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    if (window.pdfjsLib) {
-      setPdfJsLoaded(true)
-      return
-    }
-
-    const script = document.createElement('script')
-    script.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'
-    script.async = true
-    script.onload = () => {
-      if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = ''
-        setPdfJsLoaded(true)
-      }
-    }
-    script.onerror = () => {
-      console.error('[PDF] Failed to load CDN')
-    }
-    document.body.appendChild(script)
-
-    return () => {
-      // 不移除 script，避免重复加载
-    }
-  }, [])
 
   function toggle<T>(arr: T[], item: T): T[] {
     return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]
@@ -78,13 +44,9 @@ export default function SetupPage() {
       if (file.name.endsWith('.txt')) {
         text = await file.text()
       } else if (file.name.endsWith('.pdf')) {
-        if (!pdfJsLoaded || !window.pdfjsLib) {
-          setFileError('PDF 加载中，请稍后再试或粘贴文本')
-          return
-        }
-
         try {
-          const pdfjsLib = window.pdfjsLib
+          const pdfjsLib = await import('pdfjs-dist')
+          pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
           const arrayBuffer = await file.arrayBuffer()
           console.log('[PDF] File size:', arrayBuffer.byteLength, 'bytes')
 
@@ -178,7 +140,6 @@ export default function SetupPage() {
                 onChange={handleFileUpload}
               />
             </label>
-            {!pdfJsLoaded && <span className="text-xs text-gray-400">PDF 加载中…</span>}
             {fileLoading && <span className="text-xs text-gray-400">解析中…</span>}
             {fileError && <span className="text-xs text-red-500">{fileError}</span>}
             {!fileLoading && !fileError && resumeText && (
@@ -277,7 +238,7 @@ export default function SetupPage() {
           <div className="space-y-2">
             <p className="text-sm font-medium text-gray-700">TTS 引擎</p>
             <div className="flex gap-2">
-              {(['murf', 'azure', 'system'] as const).map((e) => (
+              {(['murf', 'azure', 'doubao', 'system'] as const).map((e) => (
                 <button
                   key={e}
                   onClick={() => setTTSEngine(e)}
@@ -287,15 +248,17 @@ export default function SetupPage() {
                       : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
                   }`}
                 >
-                  {e === 'murf' ? 'Murf' : e === 'azure' ? 'Azure' : '系统'}
+                  {e === 'murf' ? 'Murf' : e === 'azure' ? 'Azure' : e === 'doubao' ? '豆包' : '系统'}
                 </button>
               ))}
             </div>
             {ttsEngine === 'murf' && (
-              <div className="space-y-1">
+              <form className="space-y-1" onSubmit={(e) => e.preventDefault()}>
+                <input type="text" name="username" autoComplete="username" hidden readOnly value="murf" />
                 <input
                   type="password"
                   placeholder="Murf API Key"
+                  autoComplete="new-password"
                   className="w-full text-sm border border-gray-200 rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-300"
                   defaultValue={murfApiKey}
                   onBlur={(e) => setMurfApiKey(e.target.value)}
@@ -303,16 +266,18 @@ export default function SetupPage() {
                 {!murfApiKey && (
                   <p className="text-xs text-amber-500">未填 Key 将降级到系统语音合成</p>
                 )}
-              </div>
+              </form>
             )}
           </div>
 
           {/* Azure TTS config — only shown when azure is selected */}
           {ttsEngine === 'azure' && (
-            <div className="space-y-2">
+            <form className="space-y-2" onSubmit={(e) => e.preventDefault()}>
+              <input type="text" name="username" autoComplete="username" hidden readOnly value="azure" />
               <input
                 type="password"
                 placeholder="Azure API Key"
+                autoComplete="new-password"
                 className="w-full text-sm border border-gray-200 rounded px-3 py-2"
                 defaultValue={azureTTSKey}
                 onBlur={(e) => setAzureTTS(e.target.value, azureTTSRegion)}
@@ -327,6 +292,23 @@ export default function SetupPage() {
               {!azureTTSKey && (
                 <p className="text-xs text-amber-500">未填 Key 将降级到系统语音合成</p>
               )}
+            </form>
+          )}
+
+          {/* Doubao TTS — 复用与 ASR 同一份 doubao.com Cookie */}
+          {ttsEngine === 'doubao' && (
+            <div className="space-y-2">
+              <textarea
+                placeholder="豆包 Cookie(从 doubao.com 浏览器开发者工具复制完整 Cookie 头)"
+                className="w-full text-sm border border-gray-200 rounded px-3 py-2 font-mono"
+                rows={3}
+                defaultValue={doubaoCookie}
+                onBlur={(e) => setDoubaoCookie(e.target.value)}
+              />
+              {!doubaoCookie && (
+                <p className="text-xs text-amber-500">未填 Cookie 将降级到系统语音合成</p>
+              )}
+              <p className="text-xs text-gray-500">与豆包 ASR 共用 Cookie,任一处填写即可。</p>
             </div>
           )}
         </section>

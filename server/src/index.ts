@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { sessionStore } from './sessionStore'
 import { streamInterviewResponse, generateReport } from './llm'
 import { attachDoubaoProxy } from './doubao-proxy'
+import { attachDoubaoTtsProxy } from './tts-doubao-proxy'
 import type { ClientMessage, ServerMessage } from './types'
 
 const app = express()
@@ -30,6 +31,7 @@ app.get('/health', (_req, res) => {
 const httpServer = createServer(app)
 const wss = new WebSocketServer({ noServer: true })
 const doubaoWss = attachDoubaoProxy()
+const doubaoTtsWss = attachDoubaoTtsProxy()
 
 httpServer.on('upgrade', (req, socket, head) => {
   const path = req.url?.split('?')[0]
@@ -37,6 +39,8 @@ httpServer.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
   } else if (path === '/asr/doubao') {
     doubaoWss.handleUpgrade(req, socket, head, (ws) => doubaoWss.emit('connection', ws, req))
+  } else if (path === '/tts/doubao') {
+    doubaoTtsWss.handleUpgrade(req, socket, head, (ws) => doubaoTtsWss.emit('connection', ws, req))
   } else {
     socket.destroy()
   }
@@ -73,7 +77,10 @@ wss.on('connection', (ws) => {
       try {
         const report = await generateReport(session)
         send(ws, { type: 'report', report })
-        sessionStore.delete(msg.sessionId)
+        // Keep the session if we returned a fallback report — the client may
+        // ask us to regenerate. Only release when a real LLM-generated report
+        // has been delivered.
+        if (!report.is_fallback) sessionStore.delete(msg.sessionId)
       } catch (err) {
         console.error('Report generation error:', err)
         send(ws, { type: 'error', message: String(err) })

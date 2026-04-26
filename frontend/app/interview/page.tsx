@@ -15,6 +15,7 @@ import { DoubaoSTT } from '@/lib/stt/DoubaoSTT'
 import { TTSQueue } from '@/lib/tts/TTSQueue'
 import { AzureTTSProvider } from '@/lib/tts/azureTTS'
 import { MurfTTSProvider } from '@/lib/tts/murfTTS'
+import { DoubaoTTSProvider } from '@/lib/tts/doubaoTTS'
 import { useInterviewWS } from '@/lib/ws/useInterviewWS'
 import { useInterviewTimer } from '@/lib/interview/useInterviewTimer'
 import { useVADFallback } from '@/lib/interview/useVADFallback'
@@ -84,11 +85,12 @@ export default function InterviewPage() {
   // (persist middleware fires a state update after first render).
   useEffect(() => {
     const provider =
-      ttsEngine === 'murf'  ? (murfApiKey  ? new MurfTTSProvider(murfApiKey) : null) :
-      ttsEngine === 'azure' ? (azureTTSKey ? new AzureTTSProvider(azureTTSKey, azureTTSRegion) : null) :
+      ttsEngine === 'murf'   ? (murfApiKey   ? new MurfTTSProvider(murfApiKey) : null) :
+      ttsEngine === 'azure'  ? (azureTTSKey  ? new AzureTTSProvider(azureTTSKey, azureTTSRegion) : null) :
+      ttsEngine === 'doubao' ? (doubaoCookie ? new DoubaoTTSProvider(doubaoCookie) : null) :
       null  // 'system' — TTSQueue falls back to SpeechSynthesis
     ttsQueueRef.current = new TTSQueue(provider)
-  }, [ttsEngine, murfApiKey, azureTTSKey, azureTTSRegion])
+  }, [ttsEngine, murfApiKey, azureTTSKey, azureTTSRegion, doubaoCookie])
 
   // ── Timer ─────────────────────────────────────────────────────────────────
   const { startTimer, startTurn, stopTurn, state: timerState } = useInterviewTimer({
@@ -198,7 +200,7 @@ export default function InterviewPage() {
         }
       },
       onReport: (report) => {
-        saveReport(report)
+        saveReport(report, sessionId)
         router.push('/interview/report')
       },
       onError: (msg) => {

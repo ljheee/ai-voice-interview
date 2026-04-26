@@ -2,17 +2,22 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { loadReport, clearReport } from '@/lib/interview/reportStorage'
+import { loadReport, loadReportSessionId, saveReport, clearReport } from '@/lib/interview/reportStorage'
+import { regenerateReport } from '@/lib/ws/regenerateReport'
 import type { EvaluationReport } from '@/lib/types'
 
 export default function ReportPage() {
   const router = useRouter()
   const [report, setReport] = useState<EvaluationReport | null>(null)
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [regenerating, setRegenerating] = useState(false)
+  const [regenerateError, setRegenerateError] = useState('')
 
   useEffect(() => {
     const r = loadReport()
     if (!r) { router.replace('/interview/setup'); return }
     setReport(r)
+    setSessionId(loadReportSessionId())
     // NOTE: do NOT clearReport() here — React Strict Mode runs effects twice,
     // which would delete the data before the second run can read it, causing
     // an immediate redirect to /interview/setup.
@@ -24,6 +29,24 @@ export default function ReportPage() {
         加载报告中…
       </div>
     )
+  }
+
+  async function handleRegenerate() {
+    if (!sessionId) {
+      setRegenerateError('找不到会话 ID，无法重新生成')
+      return
+    }
+    setRegenerating(true)
+    setRegenerateError('')
+    try {
+      const fresh = await regenerateReport(sessionId)
+      saveReport(fresh, sessionId)
+      setReport(fresh)
+    } catch (err: any) {
+      setRegenerateError(err?.message || '重新生成失败')
+    } finally {
+      setRegenerating(false)
+    }
   }
 
   const scoreColor =
@@ -44,6 +67,27 @@ export default function ReportPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+        {/* Fallback banner */}
+        {report.is_fallback && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+            <span className="text-amber-500 text-lg leading-6">!</span>
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-medium text-amber-800">报告生成失败，当前显示为兜底数据</p>
+              <p className="text-xs text-amber-700">话题分数为预设值（6 分），并非真实评估。可点击右侧按钮重试。</p>
+              {regenerateError && (
+                <p className="text-xs text-red-600">重试失败：{regenerateError}</p>
+              )}
+            </div>
+            <button
+              onClick={handleRegenerate}
+              disabled={regenerating || !sessionId}
+              className="shrink-0 px-3 py-1.5 text-sm rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:bg-amber-300 disabled:cursor-not-allowed"
+            >
+              {regenerating ? '重新生成中…' : '重新生成'}
+            </button>
+          </div>
+        )}
+
         {/* Overall score */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 flex items-center gap-6">
           <div className={`text-6xl font-bold ${scoreColor}`}>

@@ -54,6 +54,7 @@ NEXT_PUBLIC_MODEL_SERVER=http://localhost:3001   # Whisper 模型文件托管地
 
 ```bash
 cd frontend && npm install --ignore-scripts
+bash ../scripts/setup.sh    # 拷贝 ONNX/VAD/PDF.js 等大二进制到 public/
 cd ../server && npm install
 ```
 

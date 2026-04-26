@@ -31,6 +31,7 @@ export interface EvaluationReport {
   covered_topics: string[]
   total_turns: number
   duration_min: number
+  is_fallback?: boolean
 }
 
 // Server → Client messages

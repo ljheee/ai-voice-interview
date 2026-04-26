@@ -227,6 +227,7 @@ function fallbackReport(session: InterviewSession, durationMin: number): Evaluat
     covered_topics: session.coveredTopics,
     total_turns: session.turnCount,
     duration_min: durationMin,
+    is_fallback: true,
   }
 }
 
@@ -241,7 +242,7 @@ export async function generateReport(session: InterviewSession): Promise<Evaluat
 累计评分变化：${session.totalScore}
 考察过的题目数：${session.askedIds.length}
 
-请输出以下 JSON 格式（不要有任何其他内容）：
+请输出以下 JSON 格式（不要有任何其他内容；每个 comment 不超过 20 字，summary 控制在 80 字内）：
 {
   "overall_score": <0-100的整数>,
   "summary": "<2-3句总体评价>",
@@ -255,35 +256,23 @@ export async function generateReport(session: InterviewSession): Promise<Evaluat
   "duration_min": ${durationMin}
 }`
 
-  const REPORT_TIMEOUT = 60_000
-  let raw: string
+  const systemPrompt =
+    '你是一位资深技术面试官，需要根据面试记录生成结构化评测报告。只输出合法 JSON，不要包含任何 Markdown 代码块或额外文字。'
+
+  const REPORT_TIMEOUT = 120_000
+
   try {
-    raw = await Promise.race([
-      (async () => {
-        let result = ''
-        for await (const chunk of providerChain.streamResponse(
-          '你是一位资深技术面试官，需要根据面试记录生成结构化评测报告。只输出合法 JSON，不要包含任何 Markdown 代码块或额外文字。',
-          prompt
-        )) {
-          result += chunk
-        }
-        return result
-      })(),
+    const raw = await Promise.race([
+      providerChain.generateContent(systemPrompt, prompt),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('report timeout')), REPORT_TIMEOUT)
       ),
     ])
+
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+    return JSON.parse(cleaned) as EvaluationReport
   } catch (err) {
     console.warn('[LLM] generateReport failed, using fallback:', err)
-    return fallbackReport(session, durationMin)
-  }
-
-  // Strip markdown code fences if LLM wraps in ```json ... ```
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-
-  try {
-    return JSON.parse(cleaned) as EvaluationReport
-  } catch {
     return fallbackReport(session, durationMin)
   }
 }

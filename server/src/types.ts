@@ -65,6 +65,7 @@ export interface EvaluationReport {
   covered_topics: string[]
   total_turns: number
   duration_min: number
+  is_fallback?: boolean          // true when LLM generation failed and we used hardcoded shell
 }
 
 // ─── WebSocket messages ───────────────────────────────────────────────────────

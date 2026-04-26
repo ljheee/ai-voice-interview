@@ -4,7 +4,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type STTEngine = 'webspeech' | 'whisper' | 'doubao'
-export type TTSEngine = 'murf' | 'azure' | 'system'
+export type TTSEngine = 'murf' | 'azure' | 'doubao' | 'system'
 
 interface SettingsState {
   // Voice

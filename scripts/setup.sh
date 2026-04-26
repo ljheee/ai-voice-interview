@@ -61,4 +61,17 @@ cp "$ORT_DIST/ort-wasm-simd-threaded.jsep.mjs"  "$CHUNKS/"
 cp "$ORT_DIST/ort-wasm-simd-threaded.jsep.wasm" "$CHUNKS/"
 echo "  ✓ ort jsep files → frontend/.next/static/chunks/"
 
+# ─── 4. pdf.js worker → frontend/public/ ─────────────────────────────────────
+# Loaded by pdfjs-dist at runtime when parsing uploaded PDFs. Self-hosting
+# avoids a CDN dependency (and ad-blockers / network policies that break it).
+PDFJS_DIST="$FRONTEND/node_modules/pdfjs-dist/build"
+
+if [ ! -f "$PDFJS_DIST/pdf.worker.min.mjs" ]; then
+  echo "⚠️  pdfjs-dist not found — run npm install in frontend/ first"
+  exit 1
+fi
+
+cp "$PDFJS_DIST/pdf.worker.min.mjs" "$PUBLIC/pdf.worker.min.mjs"
+echo "  ✓ pdf.worker.min.mjs → frontend/public/"
+
 echo "✅ setup complete"
