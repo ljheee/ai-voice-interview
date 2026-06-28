@@ -34,7 +34,7 @@ const STAGE_INSTRUCTIONS: Record<string, string> = {
 - 不再出新题，不再追问`,
 }
 
-function buildSystemPrompt(session: InterviewSession, candidates: CandidateQuestion[]): string {
+function buildSystemPrompt(session: InterviewSession, candidates: CandidateQuestion[], shouldCloseGracefully = false): string {
   const elapsedMin = Math.floor((Date.now() - session.startedAt) / 60000)
   const remainingMin = Math.max(0, session.totalMinutes - elapsedMin)
   const stageElapsedMin = Math.floor((Date.now() - session.stageStartedAt) / 60000)
@@ -65,6 +65,11 @@ function buildSystemPrompt(session: InterviewSession, candidates: CandidateQuest
     ? `## 候选题目（与当前考察方向相关，skill 阶段优先使用）\n${candidatesText}`
     : ''
 
+  // Graceful close instruction when time is almost up
+  const gracefulCloseSection = shouldCloseGracefully
+    ? `\n## 特殊指令（时间即将结束）\n面试时间即将结束，本轮是最后一轮。请：\n1. 对候选人的回答做简短回应\n2. 自然地结束面试，说结束语感谢候选人\n3. 将 current_stage 设置为 "closing"\n4. 不要提出新的技术问题\n`
+    : ''
+
   return `你是一位资深技术面试官，正在对候选人进行 Java 后端技术面试。
 
 ## 面试上下文
@@ -78,6 +83,7 @@ function buildSystemPrompt(session: InterviewSession, candidates: CandidateQuest
 ${resumeSection}
 ## 当前阶段指令
 ${stageInstruction}
+${gracefulCloseSection}
 
 ${candidatesSection}
 
@@ -135,7 +141,8 @@ export type LLMEvent =
 
 export async function* streamInterviewResponse(
   session: InterviewSession,
-  userText: string
+  userText: string,
+  shouldCloseGracefully = false
 ): AsyncGenerator<LLMEvent> {
   // Query external question bank for candidates relevant to next_focus (skill stage only)
   let candidates: CandidateQuestion[] = []
@@ -144,7 +151,7 @@ export async function* streamInterviewResponse(
     candidates = await queryQuestionsByFocus(focus, session.askedIds, 5)
   }
 
-  const systemPrompt = buildSystemPrompt(session, candidates)
+  const systemPrompt = buildSystemPrompt(session, candidates, shouldCloseGracefully)
 
   let buffer = ''
   let inSpeech = false
@@ -231,17 +238,33 @@ function fallbackReport(session: InterviewSession, durationMin: number): Evaluat
   }
 }
 
-export async function generateReport(session: InterviewSession): Promise<EvaluationReport> {
+const MAX_HISTORY_ROUNDS = parseInt(process.env.MAX_HISTORY_ROUNDS || '20', 10)
+
+export async function generateReport(
+  session: InterviewSession,
+  history?: Array<{ role: 'ai' | 'user'; text: string }>
+): Promise<EvaluationReport> {
   const durationMin = Math.floor((Date.now() - session.startedAt) / 60000)
 
+  // 构建对话历史摘要（限制长度避免超出上下文窗口）
+  const historySummary = history && history.length > 0
+    ? history.map((h, i) => `${i + 1}. ${h.role === 'ai' ? '面试官' : '候选人'}：${h.text.slice(0, 100)}${h.text.length > 100 ? '...' : ''}`).join('\n')
+    : '（无详细对话记录）'
+
+  const effectiveRounds = history?.length ?? 0
   const prompt = `根据以下面试记录，生成评测报告：
 
-面试时长：${durationMin} 分钟
-考察轮次：${session.turnCount}
-已覆盖话题：${session.coveredTopics.join('、') || '无'}
-累计评分变化：${session.totalScore}
-考察过的题目数：${session.askedIds.length}
+## 面试统计
+- 面试时长：${durationMin} 分钟
+- 考察轮次：${session.turnCount}
+- 已覆盖话题：${session.coveredTopics.join('、') || '无'}
+- 累计评分变化：${session.totalScore}
+- 考察过的题目数：${session.askedIds.length}
 
+## 对话历史（最近 ${effectiveRounds} 轮）
+${historySummary}
+
+## 输出要求
 请输出以下 JSON 格式（不要有任何其他内容；每个 comment 不超过 20 字，summary 控制在 80 字内）：
 {
   "overall_score": <0-100的整数>,
@@ -257,17 +280,13 @@ export async function generateReport(session: InterviewSession): Promise<Evaluat
 }`
 
   const systemPrompt =
-    '你是一位资深技术面试官，需要根据面试记录生成结构化评测报告。只输出合法 JSON，不要包含任何 Markdown 代码块或额外文字。'
-
-  const REPORT_TIMEOUT = 120_000
+    '你是一位资深技术面试官，需要根据面试记录生成结构化评测报告。基于对话历史评估候选人的技术能力、表达能力和思维方式。只输出合法 JSON，不要包含任何 Markdown 代码块或额外文字。'
 
   try {
-    const raw = await Promise.race([
-      providerChain.generateContent(systemPrompt, prompt),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('report timeout')), REPORT_TIMEOUT)
-      ),
-    ])
+    const raw = await providerChain.generateContent(systemPrompt, prompt, {
+      timeout: 120_000,
+      maxTokens: 2000,
+    })
 
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
     return JSON.parse(cleaned) as EvaluationReport

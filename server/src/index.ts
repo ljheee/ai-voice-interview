@@ -75,7 +75,7 @@ wss.on('connection', (ws) => {
         return
       }
       try {
-        const report = await generateReport(session)
+        const report = await generateReport(session, session.history)
         send(ws, { type: 'report', report })
         // Keep the session if we returned a fallback report — the client may
         // ask us to regenerate. Only release when a real LLM-generated report
@@ -95,8 +95,19 @@ wss.on('connection', (ws) => {
         return
       }
 
+      // Server is the source of truth for interview time.
+      const elapsedMin = Math.floor((Date.now() - session.startedAt) / 60000)
+      const remainingMin = Math.max(0, session.totalMinutes - elapsedMin)
+      const shouldCloseGracefully = remainingMin < 3
+
+      // Record user message
+      sessionStore.recordTurn(msg.sessionId, 'user', msg.text)
+
+      let aiText = ''
+      let streamError: unknown = null
+
       try {
-        for await (const event of streamInterviewResponse(session, msg.text)) {
+        for await (const event of streamInterviewResponse(session, msg.text, shouldCloseGracefully)) {
           if (event.type === 'thinking') {
             sessionStore.applyThinking(
               session.sessionId,
@@ -104,11 +115,23 @@ wss.on('connection', (ws) => {
               event.payload.action === 'next_question' ? event.payload.selected_id : undefined
             )
           }
+          if (event.type === 'sentence') {
+            aiText += event.text
+          }
           send(ws, event)
+        }
+        // Record AI response (aggregate sentences)
+        if (aiText.trim()) {
+          sessionStore.recordTurn(msg.sessionId, 'ai', aiText.trim())
         }
         const updated = sessionStore.get(msg.sessionId)
         send(ws, { type: 'turn_end', askedIds: updated?.askedIds ?? [] })
       } catch (err) {
+        streamError = err
+        // Save partial AI response even if stream failed
+        if (aiText.trim()) {
+          sessionStore.saveIncompleteAI(msg.sessionId, aiText)
+        }
         const isTimeout = String(err).includes('timed out') || String(err).includes('timeout')
         if (isTimeout) {
           console.warn('[LLM] request timed out — all providers exhausted')

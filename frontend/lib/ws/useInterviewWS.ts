@@ -106,7 +106,11 @@ export function useInterviewWS(
 
   const sendUserTurn = useCallback(
     (text: string) => {
-      wsRef.current?.send(JSON.stringify({ type: 'user_turn', sessionId, text }))
+      wsRef.current?.send(JSON.stringify({
+        type: 'user_turn',
+        sessionId,
+        text,
+      }))
     },
     [sessionId]
   )

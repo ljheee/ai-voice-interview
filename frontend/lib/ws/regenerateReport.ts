@@ -1,4 +1,4 @@
-import type { ServerMessage, EvaluationReport } from '../types'
+import type { EvaluationReport } from '../types'
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001/ws/interview'
@@ -35,7 +35,10 @@ export function regenerateReport(sessionId: string): Promise<EvaluationReport> {
     }
 
     ws.onmessage = (event) => {
-      let msg: ServerMessage
+      type RegenMessage =
+        | { type: 'report'; report: EvaluationReport }
+        | { type: 'error'; message: string }
+      let msg: RegenMessage
       try { msg = JSON.parse(event.data) } catch { return }
       if (msg.type === 'report') finish(null, msg.report)
       else if (msg.type === 'error') finish(new Error(msg.message))

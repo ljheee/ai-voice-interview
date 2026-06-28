@@ -22,19 +22,23 @@ export default function CategoryNav({ categories }: Props) {
       >
         全部
       </Link>
-      {categories.map((cat) => (
-        <Link
-          key={cat}
-          href={`/category/${encodeURIComponent(cat)}`}
-          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-            pathname === `/category/${encodeURIComponent(cat)}`
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-          }`}
-        >
-          {cat}
-        </Link>
-      ))}
+      {categories.map((cat) => {
+        const encodedPath = `/category/${encodeURIComponent(cat)}`;
+        const isActive = pathname === encodedPath || pathname === `/category/${cat}`;
+        return (
+          <Link
+            key={cat}
+            href={encodedPath}
+            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              isActive
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            {cat}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

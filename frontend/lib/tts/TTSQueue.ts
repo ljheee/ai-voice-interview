@@ -95,10 +95,12 @@ export class TTSQueue {
   /** Clear queue and stop current playback */
   clear(): void {
     this.queue = []
-    this.requestQueue = []
     this.playing = false
     this.idleCallback = null
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null }
+    // 清理正在等待的请求队列
+    // 注意：不调用 next() 避免增加 activeRequests 计数
+    this.requestQueue = []
     if (typeof window !== 'undefined') {
       speechSynthesis.cancel()
     }

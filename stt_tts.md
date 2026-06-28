@@ -5,12 +5,15 @@
 ```
 用户按住PTT说话
   │
-  ├─ Silero VAD（@ricky0123/vad-react）→ 检测说话结束
-  ├─ STT（双引擎可切换）→ 实时字幕预览 + 最终识别
+  ├─ Silero VAD（仅 WebSpeech 模式启用）→ 检测静音，触发倒计时自动松键
+  ├─ STT（三引擎可切换）→ 实时字幕预览 + 最终识别
   │
 用户松开PTT
   │
-  └─ 最终文字 → 后端出题引擎 → LLM → TTS → 播放
+  └─ 最终文字 → 后端出题引擎 → LLM（按句流式输出）→ TTS → 播放
+
+关键约束：STT 的 `final` 事件只在用户松开 PTT 后才会被处理并发送给 LLM；
+按住 PTT 期间即使浏览器原生触发 final，也会被忽略。
 ```
 
 ---
@@ -25,38 +28,38 @@
 interface STTProvider {
   start(): void
   stop(): void
-  on(event: 'interim' | 'final', handler: (text: string) => void): void
+  on(event: 'interim' | 'final' | 'thinking' | 'error', handler: (text: string) => void): void
+  off(event: 'interim' | 'final' | 'thinking' | 'error', handler: (text: string) => void): void
 }
 
-class WebSpeechSTT implements STTProvider { ... }
-class WhisperONNXSTT implements STTProvider { ... }
-
-const stt: STTProvider = useWebSpeech
-  ? new WebSpeechSTT()
-  : new WhisperONNXSTT()
-
-// 使用方式
-stt.on('interim', (text) => updateSubtitle(text))
-stt.on('final', (text) => sendToLLM(text))
-stt.start()
+// 三引擎实现
+class WebSpeechSTT implements STTProvider { ... }      // Chrome，在线
+class WhisperONNXSTT implements STTProvider { ... }    // 全浏览器，本地 ONNX
+class DoubaoSTT implements STTProvider { ... }         // 豆包 ASR，WebSocket
 ```
+
+当前代码根据 `sttEngine`（`webspeech` / `whisper` / `doubao`）实例化对应引擎。
 
 ### 两种引擎对比
 
-| 维度 | webkitSpeechRecognition | ONNX Whisper（本地） |
-|------|------------------------|---------------------|
-| 实时流式字幕 | ✅ 真正边说边出字 | ⚠️ 分段模拟，轻微延迟 |
-| 准确率 | ✅ Google ASR，顶级 | ✅ 很好，中文技术术语准 |
-| 跨浏览器 | ❌ 仅 Chrome | ✅ 所有浏览器 |
-| 断网可用 | ❌ | ✅ 本地运行 |
-| 数据隐私 | ❌ 音频过 Google | ✅ 完全本地 |
-| 首次加载 | ✅ 即时 | ⚠️ 需下载模型 ~150MB（之后缓存） |
-| 费用 | 免费 | 免费 |
+| 维度 | webkitSpeechRecognition | ONNX Whisper（本地） | 豆包 ASR（Doubao） |
+|------|------------------------|---------------------|-------------------|
+| 实时流式字幕 | ✅ 真正边说边出字 | ⚠️ 分段模拟，轻微延迟 | ✅ 边说边出字 |
+| 准确率 | ✅ Google ASR，顶级 | ✅ 很好，中文技术术语准 | ✅ 中文技术场景准 |
+| 跨浏览器 | ❌ 仅 Chrome | ✅ 所有浏览器 | ✅ 所有浏览器 |
+| 断网可用 | ❌ | ✅ 本地运行 | ❌ 需联网到豆包 |
+| 数据隐私 | ❌ 音频过 Google | ✅ 完全本地 | ❌ 音频过豆包服务 |
+| 首次加载 | ✅ 即时 | ⚠️ 需下载模型 ~150MB（之后缓存） | ✅ 即时 |
+| 费用 | 免费 | 免费 | 依赖豆包账号额度 |
+| 配置 | 无需配置 | 需本地/远程托管模型 | 需豆包 Cookie |
 
 ### 注意事项
-- ONNX Whisper 模拟 interim：每 1.5s 截取一段音频转写，拼接显示
-- 两者 interim/final 行为不一致，接口层统一抹平，上层无感知
-- 参考：alading 项目（`@xenova/transformers` + `onnxruntime-web`）的集成代码
+
+- **PTT 释放后才发送 final**：`frontend/app/interview/page.tsx` 中显式忽略 PTT 按住期间到达的 STT native final，只有 `vadStatus === 'processing'`（已松键）时才把最终文本发给 LLM。
+- ONNX Whisper 模拟 interim：每 1.5s 截取一段音频转写，拼接显示。
+- 两者 interim/final 行为不一致，接口层统一抹平，上层无感知。
+- 豆包 ASR：`stop()` 与 `finish` 事件存在竞争，内部用 `finalEmitted` 标志去重，防止同一段识别触发两次 `final`。
+- 参考：alading 项目（`@xenova/transformers` + `onnxruntime-web`）的集成代码。
 
 ---
 
@@ -87,6 +90,7 @@ vad.start()
 |----------|----------|------|
 | WebSpeechSTT | ✅ 启用 | WebSpeech 使用浏览器内部 API，不占用 MediaRecorder，VAD 可独立开麦 |
 | WhisperONNXSTT | ❌ 禁用 | Whisper 的 `MediaRecorder` 已独占麦克风，VAD 再开麦会冲突 |
+| DoubaoSTT | ❌ 禁用 | 豆包 ASR 通过 `getUserMedia` + `AudioContext` 直接采集麦克风，VAD 再开麦会冲突 |
 
 实现上通过 `enabled={sttEngine === 'webspeech'}` 控制 `useVADFallback` hook 是否激活。
 
@@ -99,6 +103,20 @@ vad.start()
 - 免费额度：50 万字符/月，约 30 次完整面试
 - 中文音色：晓晓（XiaoxiaoNeural）、云希，音质自然有情感
 - 支持 SSML 手动控制情感/语速/停顿
+
+**Murf TTS**
+
+- 浏览器端直接调用 Murf API，不经过后端
+- 需配置 Murf API Key
+
+**豆包 TTS（DoubaoTTS）**
+
+- 需配置豆包相关凭证
+- 通过后端 `/tts/doubao` 或类似代理获取音频
+
+**系统语音（SpeechSynthesis）**
+
+- 完全免费，作为所有商业 TTS 失败时的降级方案
 
 **SSML 情感控制 — 规则驱动（非 LLM 生成）：**
 
@@ -137,31 +155,34 @@ ttsQueueRef.current?.push(text, hint)
 interface TTSTask {
   text: string
   hint: SentenceHint
-  audioPromise: Promise<AudioBuffer>
+  audioPromise: Promise<AudioBuffer | null>  // null 表示降级到 SpeechSynthesis
 }
 
 class TTSQueue {
   push(text: string, hint: SentenceHint = 'default') {
-    // 立刻发请求，不等前一句播完（并行预请求）
-    this.queue.push({ text, hint, audioPromise: this._fetch(text, hint) })
+    // 立刻发请求，不等前一句播完（并行预请求，但受 provider.maxConcurrent 限制）
+    const audioPromise: Promise<AudioBuffer | null> = this.provider
+      ? this._fetch(text, hint)
+      : Promise.resolve(null)
+    this.queue.push({ text, hint, audioPromise })
     if (!this.playing) this._playNext()
   }
 
   private async _playNext() {
-    const task = this.queue.shift()!
-    try {
-      const audioBuffer = await task.audioPromise  // 大概率已 ready
-      // ... 播放 AudioBuffer
-    } catch {
-      // 降级：SpeechSynthesis，rate 跟随 hint，保证语义完整
-      const utter = new SpeechSynthesisUtterance(task.text)
-      utter.lang = 'zh-CN'
-      utter.rate = task.hint === 'first' ? 0.8 : task.hint === 'question' ? 0.85 : 0.9
-      speechSynthesis.speak(utter)
+    while (this.queue.length > 0) {
+      const task = this.queue.shift()!
+      const audioBuffer = await task.audioPromise
+      if (audioBuffer) {
+        // 通过 AudioContext 播放
+      } else {
+        // 降级到 SpeechSynthesis
+      }
     }
   }
 }
 ```
+
+`clear()` 会清空队列、取消当前播放，并清空等待中的请求队列（不调用 `next()` 避免误增 `activeRequests`）。
 
 **失败处理原则：不跳过，降级到 SpeechSynthesis。**
 跳过会导致语义断裂（用户听到残缺的问题），面试场景不可接受。降级音质变差但语义完整，用户至少能听清被问了什么。
@@ -212,14 +233,25 @@ TTS 播放                                  ▶play1      ▶play2
 | LLM first sentence → TTS ready | 200-400ms | 并行请求，短句切割 |
 | **合计** | **600ms-1.2s** | 体感流畅 |
 
-### LLM 流式输出按句切割
+### LLM 流式输出按句切割（服务端实现）
 
-```javascript
-function extractSentences(text) {
-  const matches = text.match(/[^，。？！,?!]+[，。？！,?!]/g) || [];
-  return matches;  // 每个标点停顿点立刻送 TTS
+服务端 `server/src/llm.ts` 中的 `streamInterviewResponse()` 负责把 LLM 流切分为 `sentence` 事件：
+
+1. LLM 输出被约束在 `<speech>...</speech>` 标签内；
+2. 服务端边收流边累积 speech 内容；
+3. 用正则匹配完整句子（以句末/停顿标点结尾），立刻 `yield { type: 'sentence', text: s }`；
+4. 前端收到 `sentence` 后立即推入 `TTSQueue`，实现“边说边播”。
+
+```typescript
+// server/src/llm.ts
+function extractSentences(text: string): string[] {
+  return (text.match(/[^，。？！,?!\n]+[，。？！,?!\n]/g) ?? [])
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 ```
+
+切分标点包括中文 `，。！？`、英文 `,.?!` 以及换行 `\n`。
 
 ---
 
@@ -657,8 +689,8 @@ client                          server
 | 技能方向 | 多选，对应简历技术栈，AI 优先考察 |
 | 面试时长 | 30 / 45 / 60 / 90 分钟 |
 | 跳过自我介绍 | checkbox，直接进入项目/技能考察 |
-| STT 引擎 | WebSpeech（Chrome）/ Whisper ONNX（跨浏览器） |
-| TTS 引擎 | Murf API / Azure TTS / 系统语音（降级） |
+| STT 引擎 | WebSpeech（Chrome）/ Whisper ONNX（跨浏览器）/ 豆包 ASR（Doubao） |
+| TTS 引擎 | Murf API / Azure TTS / 豆包 TTS（DoubaoTTS）/ 系统语音（降级） |
 | Murf API Key | 填入后在浏览器直接调用 Murf，不经过后端 |
 | Azure TTS | API Key + Region（可选） |
 

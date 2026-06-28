@@ -37,15 +37,6 @@ export default function InterviewPage() {
     resumeText, skipIntro, useQuestionBank, questionBankUrl,
   } = useSettingsStore()
 
-  // ── Setup guard ───────────────────────────────────────────────────────────
-  // Redirect to setup if the store hasn't been hydrated with a meaningful config.
-  // We check for the persisted key rather than specific values so users who
-  // intentionally left companies/skills empty still get through.
-  useEffect(() => {
-    const stored = localStorage.getItem('ai-interview-settings')
-    if (!stored) router.replace('/interview/setup')
-  }, [router])
-
   // ── UI state ──────────────────────────────────────────────────────────────
   const [interimText, setInterimText] = useState('')
   const [finalText, setFinalText] = useState('')
@@ -61,9 +52,30 @@ export default function InterviewPage() {
   const [wsError, setWsError] = useState<string | null>(null)
   const [pttCountdown, setPttCountdown] = useState<number | null>(null)
   const [chatHistory, setChatHistory] = useState<ChatEntry[]>([])
-  const [currentStage, setCurrentStage] = useState<InterviewStage>(
-    skipIntro ? 'project' : 'intro'
-  )
+  // 使用 'intro' 作为初始值，确保 SSR/ hydration 期间渲染一致
+  // 实际值在 Zustand hydration 完成后通过 effect 更新
+  const [currentStage, setCurrentStage] = useState<InterviewStage>('intro')
+  const [isHydrated, setIsHydrated] = useState(false)
+
+  // ── Setup guard ───────────────────────────────────────────────────────────
+  // Redirect to setup if the store hasn't been hydrated with a meaningful config.
+  // We check for the persisted key rather than specific values so users who
+  // intentionally left companies/skills empty still get through.
+  useEffect(() => {
+    const stored = localStorage.getItem('ai-interview-settings')
+    if (!stored) router.replace('/interview/setup')
+  }, [router])
+
+  // ── Hydration guard ────────────────────────────────────────────────────────
+  // Wait for Zustand persist middleware to finish hydration before using persisted values.
+  useEffect(() => {
+    // Zustand persist uses localStorage; if we can read it, hydration is done.
+    // We also track isHydrated to prevent double-setting.
+    if (!isHydrated) {
+      setIsHydrated(true)
+      setCurrentStage(skipIntro ? 'project' : 'intro')
+    }
+  }, [skipIntro, isHydrated])
 
   // ── Session init ──────────────────────────────────────────────────────────
   const [sessionId] = useState(() => crypto.randomUUID())
@@ -100,6 +112,10 @@ export default function InterviewPage() {
     onTurnOvertime: () => handlePTTEndRef.current(),
     onInterviewEnd: () => handleEndInterview(),
   })
+
+  // Track time-up state for async callbacks (STT final / turn end).
+  const isTimeUpRef = useRef(timerState.isTimeUp)
+  useEffect(() => { isTimeUpRef.current = timerState.isTimeUp }, [timerState.isTimeUp])
 
   // ── STT provider ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -199,6 +215,10 @@ export default function InterviewPage() {
           ttsQueueRef.current.onIdle(() => setAiSpeaking(false))
         } else {
           setAiSpeaking(false)
+        }
+        // If time is up and AI has finished closing words, auto-end interview
+        if (isTimeUpRef.current && !ending) {
+          setTimeout(() => handleEndInterview(), 500)
         }
       },
       onReport: (report) => {
@@ -329,6 +349,14 @@ export default function InterviewPage() {
     sttRef.current?.stop()
     sendSessionEndRef.current()
   }, [ending])
+
+  // Auto-end interview when time is up and the session is truly idle
+  // (no active speech, no AI speaking/thinking, not already ending).
+  useEffect(() => {
+    if (timerState.isTimeUp && !llmThinking && !aiSpeaking && !ending && vadStatus === 'idle') {
+      handleEndInterview()
+    }
+  }, [timerState.isTimeUp, llmThinking, aiSpeaking, ending, vadStatus, handleEndInterview])
 
   // ── WS error / disconnected overlay ──────────────────────────────────────
   // wsError set by onError callback = LLM-level error (WS still alive)

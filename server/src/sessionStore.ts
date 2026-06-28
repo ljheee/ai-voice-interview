@@ -2,13 +2,25 @@ import type { InterviewSession, ThinkingPayload, InterviewStage } from './types'
 
 const store = new Map<string, InterviewSession>()
 
-// Evict sessions older than 2 hours
+// Configuration from environment
+const MAX_HISTORY_ROUNDS = parseInt(process.env.MAX_HISTORY_ROUNDS || '20', 10)
+const SESSION_TTL_MS = parseInt(process.env.SESSION_TTL_HOURS || '2', 10) * 60 * 60 * 1000
+const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MIN || '10', 10) * 60 * 1000
+
+// Evict sessions older than SESSION_TTL_MS
 setInterval(() => {
-  const cutoff = Date.now() - 2 * 60 * 60 * 1000
+  const cutoff = Date.now() - SESSION_TTL_MS
+  let cleaned = 0
   for (const [id, s] of store) {
-    if (s.startedAt < cutoff) store.delete(id)
+    if (s.startedAt < cutoff) {
+      store.delete(id)
+      cleaned++
+    }
   }
-}, 10 * 60 * 1000)
+  if (cleaned > 0) {
+    console.log(`[SessionStore] Cleaned ${cleaned} expired sessions, remaining: ${store.size}`)
+  }
+}, CLEANUP_INTERVAL_MS)
 
 export const sessionStore = {
   create(
@@ -30,9 +42,25 @@ export const sessionStore = {
       skipIntro,
       currentStage: skipIntro ? 'project' : 'intro',
       totalScore: 0,
+      history: [],
     }
     store.set(sessionId, session)
     return session
+  },
+
+  /** Record a conversation turn */
+  recordTurn(sessionId: string, role: 'ai' | 'user', text: string) {
+    const s = store.get(sessionId)
+    if (!s) return
+    const newHistory = [...s.history, { role, text }]
+    // Keep only last N rounds to control memory usage
+    if (newHistory.length > MAX_HISTORY_ROUNDS) {
+      newHistory.splice(0, newHistory.length - MAX_HISTORY_ROUNDS)
+    }
+    store.set(sessionId, {
+      ...s,
+      history: newHistory,
+    })
   },
 
   get(sessionId: string): InterviewSession | undefined {
@@ -67,4 +95,15 @@ export const sessionStore = {
   delete(sessionId: string) {
     store.delete(sessionId)
   },
+
+  /** Save incomplete AI response (for graceful close when time is up) */
+  saveIncompleteAI(sessionId: string, partialText: string) {
+    const s = store.get(sessionId)
+    if (!s || !partialText.trim()) return
+    store.set(sessionId, {
+      ...s,
+      history: [...s.history, { role: 'ai', text: `[结束前] ${partialText.trim()}` }],
+    })
+  },
+
 }

@@ -29,6 +29,8 @@ export interface InterviewSession {
   totalScore: number
   // next_focus from last AI thinking — used to query Supabase on next turn
   nextFocus?: string
+  // Conversation history for report generation
+  history: Array<{ role: 'ai' | 'user'; text: string }>
 }
 
 // ─── LLM output ───────────────────────────────────────────────────────────────

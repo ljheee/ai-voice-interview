@@ -2,7 +2,8 @@ import OpenAI from 'openai'
 import { loadProviderConfigs } from './types'
 
 const HEDGE_DELAY    = 15_000  // fire backup request after 15s of no first chunk
-const REQUEST_TIMEOUT = 30_000  // hard timeout per individual request
+const REQUEST_TIMEOUT = 30_000  // hard timeout per individual request (streaming)
+const REPORT_TIMEOUT  = 120_000 // longer timeout for report generation (non-streaming, complex prompt)
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
@@ -239,14 +240,19 @@ export class ProviderChain {
     throw lastErr ?? new Error('All LLM providers failed')
   }
 
-  async generateContent(systemPrompt: string, userPrompt: string): Promise<string> {
+  async generateContent(
+    systemPrompt: string,
+    userPrompt: string,
+    options?: { timeout?: number; maxTokens?: number }
+  ): Promise<string> {
+    const timeout = options?.timeout ?? REPORT_TIMEOUT
     let lastErr: unknown
     for (const cfg of this.configs) {
       try {
         const client = new OpenAI({
           apiKey: cfg.apiKey,
           baseURL: cfg.baseUrl,
-          timeout: REQUEST_TIMEOUT,
+          timeout,
           ...(cfg.userAgent ? { defaultHeaders: { 'User-Agent': cfg.userAgent } } : {}),
         })
         const response = await client.chat.completions.create({
@@ -256,6 +262,7 @@ export class ProviderChain {
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: userPrompt },
           ],
+          max_tokens: options?.maxTokens,
         })
         return response.choices[0]?.message?.content?.trim() ?? ''
       } catch (err) {

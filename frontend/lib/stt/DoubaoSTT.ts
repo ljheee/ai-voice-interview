@@ -25,6 +25,8 @@ export class DoubaoSTT implements STTProvider {
   private handleClose: (() => void) | null = null
   private handleOpen: (() => void) | null = null
   private stopTimeout: ReturnType<typeof setTimeout> | null = null
+  // Prevent duplicate final events (race between stop() timeout and 'finish' event)
+  private finalEmitted = false
 
   constructor(cookie: string, serverUrl = 'ws://localhost:3001') {
     this.cookie = cookie
@@ -55,6 +57,7 @@ export class DoubaoSTT implements STTProvider {
       return
     }
     this.lastText = ''
+    this.finalEmitted = false
 
     const ws = new WebSocket(this.wsUrl)
     this.ws = ws
@@ -105,6 +108,9 @@ export class DoubaoSTT implements STTProvider {
       }
 
       if (msg.event === 'finish') {
+        // 防止重复触发 final（与 stop() 的超时竞争）
+        if (this.finalEmitted) return
+        this.finalEmitted = true
         // 清理 stop() 中的备用定时器
         if (this.stopTimeout) {
           clearTimeout(this.stopTimeout)
@@ -144,6 +150,9 @@ export class DoubaoSTT implements STTProvider {
     const textToEmit = this.lastText
     this.stopTimeout = setTimeout(() => {
       this.stopTimeout = null
+      // 检查 final 是否已由 'finish' 事件触发
+      if (this.finalEmitted) return
+      this.finalEmitted = true
       if (ws.readyState === WebSocket.OPEN) {
         if (textToEmit) this.emit('final', textToEmit)
         ws.close(1000)
@@ -171,6 +180,7 @@ export class DoubaoSTT implements STTProvider {
     if (this.processor) { this.processor.disconnect(); this.processor = null }
     if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null }
     if (this.mediaStream) { this.mediaStream.getTracks().forEach((t) => t.stop()); this.mediaStream = null }
+    this.finalEmitted = false
     this.ws = null
   }
 }

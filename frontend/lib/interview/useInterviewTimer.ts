@@ -8,6 +8,8 @@ export interface TimerState {
   turnElapsedSec: number    // seconds since current PTT press started
   isOvertime: boolean       // elapsed > totalSec
   isTurnOvertime: boolean   // turnElapsedSec > maxTurnSec (default 5 min)
+  isTimeUp: boolean         // time is up, should gracefully close
+  remainingMin: number      // remaining minutes for business logic
 }
 
 interface UseInterviewTimerOptions {
@@ -29,11 +31,13 @@ export function useInterviewTimer({
   const [elapsedSec, setElapsedSec] = useState(0)
   const [turnElapsedSec, setTurnElapsedSec] = useState(0)
   const [turnActive, setTurnActive] = useState(false)
+  const [isTimeUp, setIsTimeUp] = useState(false)
 
   const startTimeRef = useRef<number | null>(null)
   const turnStartRef = useRef<number | null>(null)
   const endFiredRef = useRef(false)
   const turnOvertimeFiredRef = useRef(false)
+  const timeUpFiredRef = useRef(false)
   // Refs for callbacks — avoids interval teardown/recreate on every render
   const onInterviewEndRef = useRef(onInterviewEnd)
   const onTurnOvertimeRef = useRef(onTurnOvertime)
@@ -68,9 +72,12 @@ export function useInterviewTimer({
         const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
         setElapsedSec(elapsed)
 
-        if (!endFiredRef.current && elapsed >= totalSec) {
-          endFiredRef.current = true
-          onInterviewEndRef.current?.()
+        // Set isTimeUp when total time is reached, but don't force end immediately
+        // Let current turn complete gracefully (AI will say closing words)
+        if (!timeUpFiredRef.current && elapsed >= totalSec) {
+          timeUpFiredRef.current = true
+          setIsTimeUp(true)
+          // Note: Don't call onInterviewEnd here - let it happen after AI closing
         }
       }
 
@@ -88,6 +95,8 @@ export function useInterviewTimer({
     return () => clearInterval(id)
   }, [totalSec, maxTurnSec])  // stable: only primitive values, callbacks via refs
 
+  const remainingMin = Math.max(0, Math.floor((totalSec - elapsedSec) / 60))
+
   return {
     startTimer,
     startTurn,
@@ -98,6 +107,8 @@ export function useInterviewTimer({
       turnElapsedSec,
       isOvertime: elapsedSec >= totalSec,
       isTurnOvertime: turnActive && turnElapsedSec >= maxTurnSec,
+      isTimeUp,
+      remainingMin,
     } satisfies TimerState,
   }
 }
