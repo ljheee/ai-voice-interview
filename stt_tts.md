@@ -57,7 +57,7 @@ class DoubaoSTT implements STTProvider { ... }         // 豆包 ASR，WebSocket
 
 - **PTT 释放后才发送 final**：`frontend/app/interview/page.tsx` 中显式忽略 PTT 按住期间到达的 STT native final，只有 `vadStatus === 'processing'`（已松键）时才把最终文本发给 LLM。
 - ONNX Whisper 模拟 interim：每 1.5s 截取一段音频转写，拼接显示。
-- 两者 interim/final 行为不一致，接口层统一抹平，上层无感知。
+- 各引擎 interim/final 行为不一致，接口层统一抹平，上层无感知。
 - 豆包 ASR：`stop()` 与 `finish` 事件存在竞争，内部用 `finalEmitted` 标志去重，防止同一段识别触发两次 `final`。
 - 参考：alading 项目（`@xenova/transformers` + `onnxruntime-web`）的集成代码。
 
@@ -69,27 +69,30 @@ class DoubaoSTT implements STTProvider { ... }         // 豆包 ASR，WebSocket
 
 - 浏览器端本地运行 ONNX 模型（~1MB），不联网
 - 能区分"停顿思考"和"真正说完"，准确率高
-- PTT 模式下 VAD 作为辅助兜底（~3s 静音自动触发 PTT 松开）
+- PTT 模式下 VAD 作为辅助兜底（~1.25s 静音触发倒计时，倒计时结束后自动松键）
 
 ```typescript
 // lib/interview/useVADFallback.ts
 import { MicVAD } from '@ricky0123/vad-web'
 const vad = await MicVAD.new({
-  positiveSpeechThreshold: 0.90,
-  negativeSpeechThreshold: 0.75,
-  minSpeechFrames: 3,
-  redemptionFrames: 8,   // ~3s 静音窗口
-  onSpeechEnd: () => handlePTTEnd(),
+  positiveSpeechThreshold: 0.92,
+  negativeSpeechThreshold: 0.70,
+  minSpeechFrames: 5,
+  redemptionFrames: 25,   // ~1.25s 静音窗口
+  onSpeechEnd: () => onSilenceStart(),    // 触发倒计时
+  onSpeechStart: () => onSilenceCancel(), // 取消倒计时
+  onVADMisfire: () => onSilenceCancel(),  // 过短语音也取消倒计时
 })
-vad.start()
 ```
+
+> VAD 本身不直接调用 `handlePTTEnd()`，而是通知调用方启动/取消倒计时；物理 PTT 按钮始终优先。
 
 ### 引擎互斥说明
 
 | STT 引擎 | VAD 状态 | 原因 |
 |----------|----------|------|
 | WebSpeechSTT | ✅ 启用 | WebSpeech 使用浏览器内部 API，不占用 MediaRecorder，VAD 可独立开麦 |
-| WhisperONNXSTT | ❌ 禁用 | Whisper 的 `MediaRecorder` 已独占麦克风，VAD 再开麦会冲突 |
+| WhisperONNXSTT | ❌ 禁用 | Whisper 通过 `getUserMedia` + `AudioWorkletNode` 独占麦克风，VAD 再开麦会冲突 |
 | DoubaoSTT | ❌ 禁用 | 豆包 ASR 通过 `getUserMedia` + `AudioContext` 直接采集麦克风，VAD 再开麦会冲突 |
 
 实现上通过 `enabled={sttEngine === 'webspeech'}` 控制 `useVADFallback` hook 是否激活。
@@ -108,11 +111,16 @@ vad.start()
 
 - 浏览器端直接调用 Murf API，不经过后端
 - 需配置 Murf API Key
+- 并发上限：`maxConcurrent = 5`
+- 重试策略：单句 8s 超时，重试 1 次，仍失败则抛错触发 SpeechSynthesis 降级
+- 支持 `SentenceHint`，通过 `RATE_MAP` 微调语速
 
 **豆包 TTS（DoubaoTTS）**
 
-- 需配置豆包相关凭证
-- 通过后端 `/tts/doubao` 或类似代理获取音频
+- 需配置豆包 Cookie
+- 通过后端 `/tts/doubao` WebSocket 代理获取音频
+- 并发上限：`maxConcurrent = 3`
+- 当前实现**忽略 `SentenceHint`**，所有句子用同一说话人参数
 
 **系统语音（SpeechSynthesis）**
 
@@ -143,6 +151,8 @@ ttsQueueRef.current?.push(text, hint)
 ```
 
 每轮 AI 回复结束（`onTurnEnd`）时重置句子序号计数器，确保下一轮首句重新触发 `first` 规则。
+
+> `SentenceHint` 目前被 Azure TTS 和 Murf TTS 消费；豆包 TTS 的实现中忽略 hint。
 
 ### TTS 流式播放队列
 
